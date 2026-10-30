@@ -28,6 +28,7 @@ flowchart TB
     Runner --> Demo[离线固定样例]
     Runner --> Probe[受限账号权限探针]
     Runner --> Live[AskDataService 实时运行]
+    Models[EVAL_LLM_MODELS 服务端模型白名单] --> Live
     Live --> Telemetry[ModelClient 调用摘要与耗时]
     Budget[每次实时评测的远程请求上限] --> Live
     Live --> BudgetRecord[已用请求数与耗尽状态]
@@ -68,6 +69,8 @@ flowchart TB
 
 实时运行还记录提示词相关源码、工作流源码的指纹与非敏感模型配置。回归对比不要求两次实现相同，但会列出变化；旧记录缺少快照时显示版本信息不足。离线演示标为 `demo`，不声称运行了实时 Agent。
 
+管理员可从服务端白名单选择实时评测的 Chat 模型。排队时冻结所选模型与配置，评测专用服务使用它执行；普通问数仍使用原配置。Embedding、Rerank、远程地址和密钥沿用同一服务。白名单由 `EVAL_LLM_MODELS` 配置，未设置时仅显示当前 `LLM_MODEL`。管理员分别运行两次后，在回归对比中查看模型及来源差异。
+
 题目清单与标准 SQL 分开存放。`edge_v1` 根据原始 CSV 和版本化边界行清单重建临时数据；`edge_v2` 在 v1 之上再追加同地区、不同订单的同额实付记录。Agent 工具、权限探针和 oracle 在同一 fixture 上运行；原始数据不变，v1 指纹保持稳定。
 
 任务集 v5 含 14 道开发集题。每题有审核说明，管理员可预览标准 SQL 与三套 fixture 的预期结果，再提交通过或退回及意见。审核记录本地持久化；任务、单题 oracle、审核说明或 fixture 指纹改变时旧审核标为过期。评测记录保存当时所选题的审核覆盖度；尚未建立独立保留集。
@@ -88,7 +91,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    A[管理员选题、模式、试验次数与实时请求上限] --> Q[创建后台运行 ID]
+    A[管理员选题、模式、Chat 模型、试验次数与实时请求上限] --> Q[创建后台运行 ID]
     Q --> B{任务类型}
     B -->|权限探针| P[受限账号执行越权 SQL]
     B -->|模型任务| M{模式}

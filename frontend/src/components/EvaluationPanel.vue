@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { api } from "../api"
-import type { EvalAudit, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunSummary, EvalTask } from "../api"
+import type { EvalAudit, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunSummary, EvalTask } from "../api"
 
 const tasks = ref<EvalTask[]>([])
 const selected = ref<string[]>([])
@@ -14,6 +14,8 @@ const error = ref("")
 const mode = ref<"demo" | "live">("demo")
 const trials = ref<1 | 3>(1)
 const requestLimit = ref<20 | 50 | 100>(50)
+const modelCatalog = ref<EvalModelCatalog | null>(null)
+const selectedModel = ref("")
 const fixtureId = ref<EvalFixtureId>("base")
 const auditFixtures: { id: EvalFixtureId; label: string }[] = [{ id: "base", label: "原始" }, { id: "edge_v1", label: "边界 v1" }, { id: "edge_v2", label: "边界 v2" }]
 const expanded = ref("")
@@ -56,11 +58,13 @@ function watchRun() {
 
 onMounted(async () => {
   try {
-    const [catalog, history, reviewCatalog] = await Promise.all([api.evalCatalog(), api.evalRuns(), api.evalReviews()])
+    const [catalog, history, reviewCatalog, models] = await Promise.all([api.evalCatalog(), api.evalRuns(), api.evalReviews(), api.evalModels()])
     tasks.value = catalog.tasks
     selected.value = catalog.tasks.slice(0, 5).map(task => task.id)
     runs.value = history
     reviews.value = reviewCatalog
+    modelCatalog.value = models
+    selectedModel.value = models.default
     const completed = history.filter(run => !run.status || run.status === "completed")
     baselineId.value = completed[1]?.id || ""
     candidateId.value = completed[0]?.id || ""
@@ -74,10 +78,10 @@ function toggle(id: string) {
 async function start() {
   error.value = ""
   if (!selected.value.length || selected.value.length > 5 || (mode.value === "live" && trials.value === 3 && selected.value.length > 3)) { error.value = "请选择 1–5 题；三次实时试验最多 3 题"; return }
-  if (mode.value === "live" && !window.confirm(`将调用远程 Chat、Embedding 和 Rerank API，最多执行 ${selected.value.length * trials.value} 次任务试验、发送 ${requestLimit.value} 次 HTTP 请求（重试也计入）。继续吗？`)) return
+  if (mode.value === "live" && !window.confirm(`Chat 模型：${selectedModel.value}。将调用远程 Chat、Embedding 和 Rerank API，最多执行 ${selected.value.length * trials.value} 次任务试验、发送 ${requestLimit.value} 次 HTTP 请求（重试也计入）。继续吗？`)) return
   busy.value = true
   try {
-    const started = await api.evalStart(mode.value, selected.value, trials.value, fixtureId.value, mode.value === "live" ? requestLimit.value : undefined)
+    const started = await api.evalStart(mode.value, selected.value, trials.value, fixtureId.value, mode.value === "live" ? requestLimit.value : undefined, mode.value === "live" ? selectedModel.value : undefined)
     current.value = await api.evalDetail(started.id)
     watchRun()
     runs.value = await api.evalRuns()
@@ -208,12 +212,13 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <h2>2 · 运行方式</h2>
         <label class="eval-option"><input v-model="mode" type="radio" value="demo"> 离线演示 · 无需模型</label>
         <label class="eval-option"><input v-model="mode" type="radio" value="live"> 实时评测 · 调用远程 API</label>
+        <label v-if="mode === 'live'" class="eval-option">Chat 模型 <select v-model="selectedModel"><option v-for="model in modelCatalog?.models || []" :key="model" :value="model">{{ model }}{{ model === modelCatalog?.default ? '（默认）' : '' }}</option></select></label>
         <label class="eval-option">独立试验 <select v-model.number="trials"><option :value="1">1 次</option><option :value="3">3 次（Pass³）</option></select></label>
         <label v-if="mode === 'live'" class="eval-option">远程请求上限 <select v-model.number="requestLimit"><option :value="20">20 次</option><option :value="50">50 次</option><option :value="100">100 次</option></select></label>
         <label class="eval-option">数据集 <select v-model="fixtureId"><option value="base">原始数据</option><option value="edge_v1">边界数据 v1</option><option value="edge_v2">边界数据 v2</option></select></label>
         <p v-if="fixtureId !== 'base'" class="eval-notice">边界数据在临时目录加入折扣、非已支付和日期端点记录；v2 再加入不同订单的同额实付记录。原始 CSV 不会改变。</p>
         <p v-if="mode === 'demo'" class="eval-notice">演示结果由固定 oracle 生成，用于体验流程，不代表模型准确率。</p>
-        <p v-else class="eval-notice">调用已配置的 Chat、Embedding、Rerank；顺序执行。三次试验最多选 3 题，可能产生 API 费用。请求上限包含重试，不是费用上限；权限护栏题不调用模型。</p>
+        <p v-else class="eval-notice">模型列表由服务端登记；Embedding、Rerank 和其他配置沿用当前服务。顺序执行，可能产生 API 费用。请求上限包含重试，不是费用上限；权限护栏题不调用模型。{{ modelCatalog?.api_key_configured ? '' : '尚未配置远程密钥。' }}</p>
         <button class="eval-primary" :disabled="busy || ['queued', 'running', 'cancel_requested'].includes(current?.status || '') || !selected.length" @click="start">{{ busy ? '正在启动…' : '开始评测' }}</button>
         <p v-if="error" class="eval-error">{{ error }}</p>
       </section>
@@ -269,6 +274,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
       <template v-if="comparison">
         <p class="eval-meta">共同题 {{ comparison.counts.common }} · {{ comparison.mode }} · {{ comparison.trials }} 次试验</p>
         <p class="eval-meta">模型：{{ comparison.baseline.model }} → {{ comparison.candidate.model }}</p>
+        <p v-if="comparison.mode === 'live'" class="eval-meta">比较模型时请保持选题、数据集、试验次数与请求上限一致；当前任务集仍需人工审核。</p>
         <p v-if="comparison.provenance?.status === 'unknown'" class="eval-notice">版本信息不足：至少一份旧运行缺少实现快照，无法判断提示词、工作流和配置是否一致。</p>
         <p v-else-if="comparison.provenance?.status === 'changed'" class="eval-notice">实现已变化：下方列出提示词、工作流或模型配置的差异。分数仍可对比。</p>
         <p v-else-if="comparison.provenance?.status === 'same'" class="eval-notice">实现快照一致；远程服务版本仍可能变化。</p>

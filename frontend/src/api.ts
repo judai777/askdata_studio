@@ -87,13 +87,14 @@ export const api = {
       method: "DELETE",
     }),
   evalCatalog: () => request<{ version: string; tasks: EvalTask[] }>("/api/eval/catalog"),
+  evalModels: () => request<EvalModelCatalog>("/api/eval/models"),
   evalReviews: () => request<EvalReviewCatalog>("/api/eval/reviews"),
   evalReviewPreview: (taskId: string) => request<EvalReviewPreview>(`/api/eval/reviews/${encodeURIComponent(taskId)}/preview`),
   evalSubmitReview: (taskId: string, decision: "approved" | "rejected", note: string, fingerprint: string) => request<{ task_id: string; status: string }>(`/api/eval/reviews/${encodeURIComponent(taskId)}`, { method: "POST", body: JSON.stringify({ decision, note, fingerprint }) }),
   evalAudit: () => request<EvalAudit>("/api/eval/audit"),
   evalRuns: () => request<EvalRunSummary[]>("/api/eval/runs"),
-  evalRun: (mode: "demo" | "live", taskIds: string[], trials: 1 | 3, fixtureId: EvalFixtureId = "base", requestLimit?: number) => request<EvalRun>("/api/eval/runs", { method: "POST", body: JSON.stringify({ mode, task_ids: taskIds, trials, fixture_id: fixtureId, request_limit: requestLimit }) }, 600_000),
-  evalStart: (mode: "demo" | "live", taskIds: string[], trials: 1 | 3, fixtureId: EvalFixtureId = "base", requestLimit?: number) => request<{ id: string; status: string }>("/api/eval/runs/start", { method: "POST", body: JSON.stringify({ mode, task_ids: taskIds, trials, fixture_id: fixtureId, request_limit: requestLimit }) }),
+  evalRun: (mode: "demo" | "live", taskIds: string[], trials: 1 | 3, fixtureId: EvalFixtureId = "base", requestLimit?: number, model?: string) => request<EvalRun>("/api/eval/runs", { method: "POST", body: JSON.stringify({ mode, task_ids: taskIds, trials, fixture_id: fixtureId, request_limit: requestLimit, model }) }, 600_000),
+  evalStart: (mode: "demo" | "live", taskIds: string[], trials: 1 | 3, fixtureId: EvalFixtureId = "base", requestLimit?: number, model?: string) => request<{ id: string; status: string }>("/api/eval/runs/start", { method: "POST", body: JSON.stringify({ mode, task_ids: taskIds, trials, fixture_id: fixtureId, request_limit: requestLimit, model }) }),
   evalDetail: (id: string) => request<EvalRun>(`/api/eval/runs/${id}`),
   evalExport: (id: string) => request<Record<string, unknown>>(`/api/eval/runs/${id}/export`),
   evalCancel: (id: string) => request<{ id: string; status: string }>(`/api/eval/runs/${id}/cancel`, { method: "POST" }),
@@ -116,6 +117,7 @@ export interface EvalStageMetric { stage: string; calls: number; failures: numbe
 export interface EvalFailureAttribution { kind: "stage" | "grader" | "runner"; stage: string | null; failed_checks: string[]; trial?: number }
 export interface EvalFailureCount { kind: EvalFailureAttribution["kind"]; stage: string | null; count: number }
 export interface EvalRequestBudget { limit: number; used: number; exhausted: boolean }
+export interface EvalModelCatalog { default: string; models: string[]; api_key_configured: boolean }
 export interface EvalModelCall { kind: string; model: string; stage?: string | null; elapsed_ms: number; attempts: number; success: boolean; usage: Record<string, number> | null }
 export interface EvalAttempt { trial: number; result: Record<string, unknown>; grade: { passed: boolean; checks: Record<string, boolean>; dimensions: Record<string, boolean> }; error: string | null; metrics?: EvalMetrics; model_calls?: EvalModelCall[]; stages?: EvalStage[]; failure_attribution?: EvalFailureAttribution | null }
 export interface EvalCase { task_id: string; category: string; query: string; kind: string; attempts: EvalAttempt[]; incomplete?: boolean; metrics?: EvalMetrics | null; stage_metrics?: EvalStageMetric[] | null; failure_attribution?: EvalFailureAttribution | null; pass3: boolean; result: Record<string, unknown>; grade: EvalAttempt["grade"]; error: string | null }

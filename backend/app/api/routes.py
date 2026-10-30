@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, StrictInt
 
 from ..errors import PipelineStageError
+from ..eval_models import model_catalog
 from ..evaluation import EvaluationService
 from ..models import (
     ClarificationRequest,
@@ -30,6 +31,7 @@ class EvalRunRequest(BaseModel):
     trials: int = 1
     fixture_id: str = "base"
     request_limit: StrictInt | None = None
+    model: str | None = None
 
 
 class EvalReviewRequest(BaseModel):
@@ -56,6 +58,14 @@ def require_admin(user: AuthUser = Depends(require_user)) -> AuthUser:
 @router.get("/eval/catalog")
 def eval_catalog(_: AuthUser = Depends(require_admin)) -> dict:
     return evaluation_service.catalog()
+
+
+@router.get("/eval/models")
+def eval_models(_: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return model_catalog()
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.get("/eval/audit")
@@ -106,7 +116,7 @@ def eval_compare(baseline: str, candidate: str, _: AuthUser = Depends(require_ad
 @router.post("/eval/runs")
 def eval_run(payload: EvalRunRequest, _: AuthUser = Depends(require_admin)) -> dict:
     try:
-        return evaluation_service.run(payload.mode, payload.task_ids, payload.trials, fixture_id=payload.fixture_id, request_limit=payload.request_limit)
+        return evaluation_service.run(payload.mode, payload.task_ids, payload.trials, fixture_id=payload.fixture_id, request_limit=payload.request_limit, model=payload.model)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -114,7 +124,7 @@ def eval_run(payload: EvalRunRequest, _: AuthUser = Depends(require_admin)) -> d
 @router.post("/eval/runs/start")
 def eval_start(payload: EvalRunRequest, _: AuthUser = Depends(require_admin)) -> dict:
     try:
-        return evaluation_service.start(payload.mode, payload.task_ids, payload.trials, payload.fixture_id, payload.request_limit)
+        return evaluation_service.start(payload.mode, payload.task_ids, payload.trials, payload.fixture_id, payload.request_limit, payload.model)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except RuntimeError as error:

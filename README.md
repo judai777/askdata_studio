@@ -134,7 +134,9 @@ npm run dev
 
 P2 失败归因已完成：失败试验给出主要排查位置，区分工作流阶段异常、确定性判分未通过与评测执行异常；运行报告按失败试验聚合，回归对比显示归因变化。归因是排查起点，不将结果不符武断归因于某个模型或检索阶段。详见[第十五阶段决策记录](docs/evaluation-v15-decisions.md)。
 
-已完成或已取消的运行可在管理员评测台下载 JSON 摘要。文件包含任务和数据版本、实现来源、审核覆盖度、逐题判分与调用/阶段指标；不包含原始问题、SQL、结果行、模型正文或异常文本。导出只读取历史记录，不再次调用模型。详见[第十四阶段决策记录](docs/evaluation-v14-decisions.md)。
+已完成、已取消或远程请求预算耗尽的运行可在管理员评测台下载 JSON 摘要。文件包含任务和数据版本、实现来源、审核覆盖度、逐题判分与调用/阶段指标；不包含原始问题、SQL、结果行、模型正文或异常文本。导出只读取历史记录，不再次调用模型。详见[第十四阶段决策记录](docs/evaluation-v14-decisions.md)。
+
+实时评测可在管理员页面选择已登记的 Chat 模型。`backend/.env` 中可设置 `EVAL_LLM_MODELS=qwen-plus,qwen-turbo`，当前 `LLM_MODEL` 自动包含在列表中；这些候选共用当前远程服务与密钥，不影响普通问数。每次运行默认最多发送 50 次远程 HTTP 请求，页面可选 20、50 或 100 次，包含重试。模型对比需要分别确认并启动两次运行；历史对比会标出模型和预算差异。详见[第十七阶段决策](docs/evaluation-v17-decisions.md)与[第十八阶段决策](docs/evaluation-v18-decisions.md)。
 
 离线回归门槛不需要本地模型或远程 API 密钥。在 `backend` 目录运行 `python seed_demo_data.py` 准备固定 CSV，运行 `python -m unittest discover -s tests -q`，再运行 `python -m app.eval_gate`。门槛核对任务、标准答案、错误 SQL 和三套 fixture 的版本/指纹，并要求 `edge_v2` 识别全部已登记错误 SQL、所有 fixture 无无效 SQL。题目或数据有意变更时，先核对审计结果，再显式更新 `backend/evals/offline_gate.json`；门槛不会自动更新基线。GitHub Actions 同步执行这些步骤和前端构建。详见[第十六阶段决策记录](docs/evaluation-v16-decisions.md)。
 
