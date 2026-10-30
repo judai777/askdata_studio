@@ -93,7 +93,7 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
     summary = record.get("summary") or {}
     return {
         "format_version": "1.0", "exported_at": datetime.now(timezone.utc).isoformat(),
-        "run": _pick(record, ("id", "mode", "status", "started_at", "finished_at", "trials", "model", "task_version", "fixture_id", "fixture_hash", "oracle_hash", "model_task_count")),
+        "run": _pick(record, ("id", "mode", "status", "started_at", "finished_at", "trials", "model", "task_version", "fixture_id", "fixture_hash", "oracle_hash", "grader_hash", "model_task_count")),
         "provenance": {
             "kind": provenance.get("kind"), "prompt_hash": provenance.get("prompt_hash"),
             "workflow_hash": provenance.get("workflow_hash"),

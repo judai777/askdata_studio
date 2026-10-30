@@ -22,6 +22,7 @@ from sqlglot import exp
 
 from .config import BASE_DIR, Settings, settings
 from .eval_models import resolve_model
+from .eval_grader_version import grader_hash
 from .eval_provenance import compare_provenance, provenance_snapshot
 from .eval_export import export_report
 from .model_client import ModelClient
@@ -244,6 +245,10 @@ def compare_records(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
     for field, label in (("task_version", "任务集版本"), ("fixture_hash", "数据指纹"), ("oracle_hash", "标准答案版本"), ("mode", "运行模式"), ("trials", "试验次数")):
         if baseline.get(field, 1 if field == "trials" else None) != candidate.get(field, 1 if field == "trials" else None):
             raise ValueError(f"{label}不同，不能直接比较")
+    base_grader, candidate_grader = baseline.get("grader_hash"), candidate.get("grader_hash")
+    if base_grader and candidate_grader and base_grader != candidate_grader:
+        raise ValueError("判分器版本不同，不能直接比较")
+    grader_comparison = {"status": "same" if base_grader and candidate_grader else "unknown", "baseline_hash": base_grader, "candidate_hash": candidate_grader}
     base_cases = {item["task_id"]: item for item in baseline.get("cases", [])}
     new_cases = {item["task_id"]: item for item in candidate.get("cases", [])}
     common = sorted(base_cases.keys() & new_cases.keys())
@@ -298,7 +303,7 @@ def compare_records(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         "baseline_limit": base_budget.get("limit") if base_budget else None,
         "candidate_limit": candidate_budget.get("limit") if candidate_budget else None,
     }
-    return {"baseline": {"id": baseline["id"], "model": baseline.get("model"), "started_at": baseline.get("started_at")}, "candidate": {"id": candidate["id"], "model": candidate.get("model"), "started_at": candidate.get("started_at")}, "mode": baseline["mode"], "trials": baseline.get("trials", 1), "task_version": baseline["task_version"], "fixture_hash": baseline["fixture_hash"], "provenance": compare_provenance(baseline.get("provenance"), candidate.get("provenance")), "budget_comparison": budget_comparison, "counts": {"common": len(common), **counts}, "only_baseline": sorted(base_cases.keys() - new_cases.keys()), "only_candidate": sorted(new_cases.keys() - base_cases.keys()), "cases": changes}
+    return {"baseline": {"id": baseline["id"], "model": baseline.get("model"), "started_at": baseline.get("started_at")}, "candidate": {"id": candidate["id"], "model": candidate.get("model"), "started_at": candidate.get("started_at")}, "mode": baseline["mode"], "trials": baseline.get("trials", 1), "task_version": baseline["task_version"], "fixture_hash": baseline["fixture_hash"], "grader_comparison": grader_comparison, "provenance": compare_provenance(baseline.get("provenance"), candidate.get("provenance")), "budget_comparison": budget_comparison, "counts": {"common": len(common), **counts}, "only_baseline": sorted(base_cases.keys() - new_cases.keys()), "only_candidate": sorted(new_cases.keys() - base_cases.keys()), "cases": changes}
 
 
 class EvaluationService:
@@ -470,6 +475,7 @@ class EvaluationService:
             total = sum(1 if indexed[task_id].get("kind") == "security_probe" else trials for task_id in task_ids)
             queued = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "queued", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": self.catalog()["version"], "fixture_hash": fixture_hash, "oracle_hash": _oracle_hash(), "provenance": provenance, "review": self.review_summary(task_ids), "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": "", "model": model_config.llm_model if model_config else "offline-demo", "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
             queued["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
+            queued["grader_hash"] = grader_hash()
             self._save(queued)
             self._executor.submit(self._run_background, mode, task_ids, trials, run_id, fixture_id, self._cancel_event, request_limit, model_config)
         return {"id": run_id, "status": "queued"}
@@ -547,6 +553,7 @@ class EvaluationService:
         total = sum(1 if indexed[task_id].get("kind") == "security_probe" else trials for task_id in task_ids)
         record: dict[str, Any] = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "running", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": catalog["version"], "fixture_hash": _fixture_hash(fixture_id), "oracle_hash": _oracle_hash(), "provenance": provenance_snapshot(mode, service.config if service else None), "review": self.review_summary(task_ids), "model": service.config.llm_model if service else "offline-demo", "started_at": datetime.now(timezone.utc).isoformat(), "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
         record["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
+        record["grader_hash"] = grader_hash()
         self._save(record)
         for task_id in task_ids:
             if cancel_event and cancel_event.is_set():
@@ -638,7 +645,7 @@ class EvaluationService:
         result = []
         for path in sorted(RUN_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:30]:
             run = json.loads(path.read_text(encoding="utf-8"))
-            item = {key: run[key] for key in ("id", "mode", "model", "fixture_id", "started_at", "status", "progress", "summary", "request_budget") if key in run}
+            item = {key: run[key] for key in ("id", "mode", "model", "fixture_id", "started_at", "status", "progress", "summary", "request_budget", "grader_hash") if key in run}
             if item.get("id") == self._active_run_id and item.get("status") in {"queued", "running"} and self._cancel_event and self._cancel_event.is_set():
                 item["status"] = "cancel_requested"
             result.append(item)
@@ -677,4 +684,5 @@ class EvaluationService:
                         case["grade"] = grade(task, case["result"], expected)
             self._summarize(record)
             record["replayed_at"] = datetime.now(timezone.utc).isoformat()
+            record["replay_grader_hash"] = grader_hash()
         return record

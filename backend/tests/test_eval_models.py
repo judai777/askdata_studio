@@ -42,6 +42,7 @@ class EvalModelTest(unittest.TestCase):
         with patch("app.evaluation.resolve_model", return_value=config), patch.object(service._executor, "submit") as submit:
             queued = service.start("live", ["guard.restricted_database"], model="candidate-a")
         self.assertEqual(service.get_run(queued["id"])["model"], "candidate-a")
+        self.assertEqual(len(service.get_run(queued["id"])["grader_hash"]), 16)
         self.assertIs(submit.call_args.args[-1], config)
 
     def test_api_lists_models_and_rejects_unregistered_choice(self) -> None:

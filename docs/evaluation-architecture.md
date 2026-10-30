@@ -48,6 +48,7 @@ flowchart TB
     StageTelemetry --> Runs
     Attribution --> Runs
     Oracle[固定 fixture 上的 oracle SQL] --> Grader
+    GraderVersion[判分函数源码与 SQLGlot 版本指纹] --> Runs
     Grader --> Trials[独立试验聚合 / Pass³]
     Trials --> Runs[JSON 运行记录]
     Runs --> Poll[按运行 ID 查询进度]
@@ -66,6 +67,8 @@ flowchart TB
 各阶段职责：任务定义输入和预期；runner 为每次试验隔离会话并收集输出；oracle 在固定数据集上计算标准结果；grader 验证路由、结果、SQL 表与安全；权限探针用受限账号直接验证数据库边界；记录保留逐题逐试验轨迹；UI 展示汇总和失败细节。
 
 回归对比读取两份已完成记录，先校验任务版本、fixture 指纹、标准答案指纹、模式和试验次数，再对共同题按 ID 比较聚合判分及各项检查；只在一侧出现的题单独列出。对比不执行模型或 SQL。
+
+新运行另存确定性判分函数及 SQLGlot 版本的 `grader_hash`。两次哈希都存在且不同则拒绝直接比较；旧记录缺少哈希时允许查看，但明确标为无法确认。重放使用当前判分器，返回 `replay_grader_hash`，保留原始哈希及历史记录。该指纹说明规则是否相同，不说明规则是否已由人工校准。
 
 实时运行还记录提示词相关源码、工作流源码的指纹与非敏感模型配置。回归对比不要求两次实现相同，但会列出变化；旧记录缺少快照时显示版本信息不足。离线演示标为 `demo`，不声称运行了实时 Agent。
 

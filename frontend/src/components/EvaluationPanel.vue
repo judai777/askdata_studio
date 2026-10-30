@@ -238,6 +238,8 @@ function failureLabel(value: EvalFailureAttribution | null) {
           <p v-if="current.summary.failure_summary?.length" class="eval-notice">失败归因（按失败试验计）：<span v-for="item in current.summary.failure_summary" :key="`${item.kind}-${item.stage}`">{{ failureLabel({ kind: item.kind, stage: item.stage, failed_checks: [] }) }} {{ item.count }} 次　</span></p>
           <p v-if="current.trials === 3" class="eval-meta">{{ current.mode === 'live' ? '模型任务 Pass³' : '演示流程 Pass³' }}：{{ current.summary.pass3 }} / {{ current.model_task_count ?? current.cases.filter(item => item.kind !== 'security_probe').length }}。权限护栏题单独运行一次。</p>
           <p class="eval-meta">任务集 v{{ current.task_version }} · {{ current.fixture_id || 'base' }} · 数据指纹 {{ current.fixture_hash }}</p>
+          <p class="eval-meta">原始判分器 {{ current.grader_hash || '未知（旧运行）' }}<span v-if="current.replay_grader_hash"> · 本次重放判分器 {{ current.replay_grader_hash }}</span></p>
+          <p v-if="current.replay_grader_hash && current.grader_hash && current.replay_grader_hash !== current.grader_hash" class="eval-notice">本次重放使用了不同的判分器，重判结果可能与原始报告不同；原始记录未被覆盖。</p>
           <p v-if="current.review" class="eval-meta">运行时人工审核：{{ current.review.approved }}/{{ current.review.total }} 题已通过 <span v-if="current.review.pending || current.review.stale || current.review.rejected">· 其余题分数仅供开发验证</span></p>
           <p v-if="current.mode === 'live' && current.provenance" class="eval-meta">提示词相关源码 {{ current.provenance.prompt_hash }} · 工作流源码 {{ current.provenance.workflow_hash }}</p>
           <p v-else-if="current.mode === 'live'" class="eval-meta">旧运行缺少实现版本信息。</p>
@@ -264,7 +266,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
     <section class="eval-card eval-history"><h2>历史运行</h2><button v-for="run in runs" :key="run.id" @click="openRun(run.id)">{{ run.started_at.slice(0, 19).replace('T', ' ') }} · {{ run.mode }} · {{ run.fixture_id || 'base' }} · {{ run.model }} · {{ run.status || 'completed' }} · {{ run.summary.passed }}/{{ run.summary.total }}</button><p v-if="!runs.length">暂无运行记录</p></section>
     <section class="eval-card eval-history">
       <h2>4 · 回归对比</h2>
-      <p>选择同一任务版本、数据、模式和试验次数的两次已完成运行；仅比较共同题目。</p>
+      <p>选择同一任务版本、数据、模式、试验次数和判分器版本的两次已完成运行；仅比较共同题目。</p>
       <div class="eval-compare-controls">
         <label>基线<select v-model="baselineId"><option value="">选择运行</option><option v-for="run in runs.filter(item => !item.status || item.status === 'completed')" :key="run.id" :value="run.id">{{ run.id }} · {{ run.mode }} · {{ run.model }}</option></select></label>
         <label>候选<select v-model="candidateId"><option value="">选择运行</option><option v-for="run in runs.filter(item => !item.status || item.status === 'completed')" :key="run.id" :value="run.id">{{ run.id }} · {{ run.mode }} · {{ run.model }}</option></select></label>
@@ -274,6 +276,8 @@ function failureLabel(value: EvalFailureAttribution | null) {
       <template v-if="comparison">
         <p class="eval-meta">共同题 {{ comparison.counts.common }} · {{ comparison.mode }} · {{ comparison.trials }} 次试验</p>
         <p class="eval-meta">模型：{{ comparison.baseline.model }} → {{ comparison.candidate.model }}</p>
+        <p v-if="comparison.grader_comparison?.status === 'same'" class="eval-meta">判分器一致：{{ comparison.grader_comparison.baseline_hash }}</p>
+        <p v-else class="eval-notice">至少一份旧运行缺少判分器版本，无法确认判分规则一致。</p>
         <p v-if="comparison.mode === 'live'" class="eval-meta">比较模型时请保持选题、数据集、试验次数与请求上限一致；当前任务集仍需人工审核。</p>
         <p v-if="comparison.provenance?.status === 'unknown'" class="eval-notice">版本信息不足：至少一份旧运行缺少实现快照，无法判断提示词、工作流和配置是否一致。</p>
         <p v-else-if="comparison.provenance?.status === 'changed'" class="eval-notice">实现已变化：下方列出提示词、工作流或模型配置的差异。分数仍可对比。</p>

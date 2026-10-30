@@ -138,6 +138,8 @@ P2 失败归因已完成：失败试验给出主要排查位置，区分工作�
 
 实时评测可在管理员页面选择已登记的 Chat 模型。`backend/.env` 中可设置 `EVAL_LLM_MODELS=qwen-plus,qwen-turbo`，当前 `LLM_MODEL` 自动包含在列表中；这些候选共用当前远程服务与密钥，不影响普通问数。每次运行默认最多发送 50 次远程 HTTP 请求，页面可选 20、50 或 100 次，包含重试。模型对比需要分别确认并启动两次运行；历史对比会标出模型和预算差异。详见[第十七阶段决策](docs/evaluation-v17-decisions.md)与[第十八阶段决策](docs/evaluation-v18-decisions.md)。
 
+新运行记录判分器指纹；已知不同判分规则的两次运行不能直接比较。历史重放会显示原始与本次判分器指纹，旧运行缺失指纹时提示无法确认。详见[第十九阶段决策](docs/evaluation-v19-decisions.md)。
+
 离线回归门槛不需要本地模型或远程 API 密钥。在 `backend` 目录运行 `python seed_demo_data.py` 准备固定 CSV，运行 `python -m unittest discover -s tests -q`，再运行 `python -m app.eval_gate`。门槛核对任务、标准答案、错误 SQL 和三套 fixture 的版本/指纹，并要求 `edge_v2` 识别全部已登记错误 SQL、所有 fixture 无无效 SQL。题目或数据有意变更时，先核对审计结果，再显式更新 `backend/evals/offline_gate.json`；门槛不会自动更新基线。GitHub Actions 同步执行这些步骤和前端构建。详见[第十六阶段决策记录](docs/evaluation-v16-decisions.md)。
 
 运行记录保存在 `backend/data/eval_runs/`（被 Git 忽略）。详情、决策和结构图见 [评测决策记录](docs/evaluation-decisions.md)与[评测结构图](docs/evaluation-architecture.md)。
