@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 
 from ..errors import PipelineStageError
 from ..evaluation import EvaluationService
@@ -29,6 +29,7 @@ class EvalRunRequest(BaseModel):
     task_ids: list[str]
     trials: int = 1
     fixture_id: str = "base"
+    request_limit: StrictInt | None = None
 
 
 class EvalReviewRequest(BaseModel):
@@ -105,7 +106,7 @@ def eval_compare(baseline: str, candidate: str, _: AuthUser = Depends(require_ad
 @router.post("/eval/runs")
 def eval_run(payload: EvalRunRequest, _: AuthUser = Depends(require_admin)) -> dict:
     try:
-        return evaluation_service.run(payload.mode, payload.task_ids, payload.trials, fixture_id=payload.fixture_id)
+        return evaluation_service.run(payload.mode, payload.task_ids, payload.trials, fixture_id=payload.fixture_id, request_limit=payload.request_limit)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -113,7 +114,7 @@ def eval_run(payload: EvalRunRequest, _: AuthUser = Depends(require_admin)) -> d
 @router.post("/eval/runs/start")
 def eval_start(payload: EvalRunRequest, _: AuthUser = Depends(require_admin)) -> dict:
     try:
-        return evaluation_service.start(payload.mode, payload.task_ids, payload.trials, payload.fixture_id)
+        return evaluation_service.start(payload.mode, payload.task_ids, payload.trials, payload.fixture_id, payload.request_limit)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except RuntimeError as error:

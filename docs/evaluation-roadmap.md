@@ -1,6 +1,6 @@
 # Agent 评测后续路线图
 
-状态：P2 阶段完成；P0 执行中，P4 报告导出与离线 CI 门槛已实现，2026-10-30。承接[评测结构与流程](evaluation-architecture.md)、[第十四阶段决策](evaluation-v14-decisions.md)、[第十五阶段决策](evaluation-v15-decisions.md)和[第十六阶段决策](evaluation-v16-decisions.md)。每一阶段先记录具体决策与验收规则，再修改代码。
+状态：P2 阶段完成；P0 执行中，P4 报告导出、离线 CI 门槛与远程请求预算已实现，2026-10-30。承接[评测结构与流程](evaluation-architecture.md)、[第十四阶段决策](evaluation-v14-decisions.md)、[第十五阶段决策](evaluation-v15-decisions.md)、[第十六阶段决策](evaluation-v16-decisions.md)和[第十七阶段决策](evaluation-v17-decisions.md)。每一阶段先记录具体决策与验收规则，再修改代码。
 
 ## 当前基础
 
@@ -34,7 +34,7 @@
 
 ## P4 · 自动化与交付
 
-JSON 摘要导出已完成，保留运行版本、来源、判分、调用和阶段指标；原始问题、SQL、数据行、模型正文与异常正文不进入下载文件。[第十四阶段决策](evaluation-v14-decisions.md)。离线 CI 门槛已接入后端测试、固定数据生成、版本/指纹核对与错误 SQL 区分力审计，前端也运行类型检查和构建。[第十六阶段决策](evaluation-v16-decisions.md)。远程评测预算控制仍待实施。
+JSON 摘要导出已完成，保留运行版本、来源、判分、调用和阶段指标；原始问题、SQL、数据行、模型正文与异常正文不进入下载文件。[第十四阶段决策](evaluation-v14-decisions.md)。离线 CI 门槛已接入后端测试、固定数据生成、版本/指纹核对与错误 SQL 区分力审计，前端也运行类型检查和构建。[第十六阶段决策](evaluation-v16-decisions.md)。实时评测已增加每次运行的远程 HTTP 请求上限，包含 Chat、Embedding、Rerank 和重试；耗尽时保存部分报告并停止后续试验。[第十七阶段决策](evaluation-v17-decisions.md)。
 
 增加可导出的评测报告和轻量回归门槛：离线规则与 fixture 审计进入 CI；远程模型评测由人工触发或受预算限制的计划任务执行。再评估断点恢复与持久作业队列；当前单进程后台执行器和取消机制足够支撑本地演示。
 

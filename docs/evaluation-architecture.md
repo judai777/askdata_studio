@@ -29,6 +29,9 @@ flowchart TB
     Runner --> Probe[受限账号权限探针]
     Runner --> Live[AskDataService 实时运行]
     Live --> Telemetry[ModelClient 调用摘要与耗时]
+    Budget[每次实时评测的远程请求上限] --> Live
+    Live --> BudgetRecord[已用请求数与耗尽状态]
+    BudgetRecord --> Runs
     Graph --> StageTelemetry[工作流与 MCP 阶段遥测]
     Sources[提示词/工作流源码与安全配置] --> Provenance[运行来源快照]
     Provenance --> Runs
@@ -73,7 +76,9 @@ flowchart TB
 
 评测专用 ModelClient 记录远程调用类型、耗时、重试及供应商返回的 token 用量。试验总耗时单独按墙钟测量。记录不含密钥、Prompt、请求 URL 或响应正文；缺失 token 用量保持未知。
 
-管理员可把已完成或已取消运行导出为带格式版本的 JSON 摘要。导出从历史记录筛选版本、判分、调用与阶段指标，不带原始问题、SQL、数据行、模型正文或异常文本；不重新执行模型或 SQL。
+管理员可把已完成、已取消或预算耗尽的运行导出为带格式版本的 JSON 摘要。导出从历史记录筛选版本、判分、调用、阶段指标与请求预算，不带原始问题、SQL、数据行、模型正文或异常文本；不重新执行模型或 SQL。
+
+实时评测默认最多发送 50 次远程 HTTP 模型请求，管理员页面可选 20、50 或 100 次；后端限制为 1–100 次。Chat、Embedding、Rerank 与重试都计入。用满后需要继续发送时，运行标记 `budget_exhausted`，保留已有试验和阶段轨迹并停止后续试验；已耗尽运行不能重放或参与已完成运行的回归对比。预算是请求次数上限，不是费用上限。
 
 失败试验的主要归因优先指出失败的 MCP 工具子阶段，否则指向最早失败的工作流阶段；没有阶段异常时区分判分未通过和评测执行异常。归因用于缩小排查范围，并随重放重新计算。旧记录没有阶段数据时不补造归因。
 
@@ -83,7 +88,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    A[管理员选题、模式与试验次数] --> Q[创建后台运行 ID]
+    A[管理员选题、模式、试验次数与实时请求上限] --> Q[创建后台运行 ID]
     Q --> B{任务类型}
     B -->|权限探针| P[受限账号执行越权 SQL]
     B -->|模型任务| M{模式}
@@ -101,7 +106,9 @@ flowchart LR
     H --> K
     K -->|继续| B
     K -->|取消| Y[标记 cancelled 并保留已完成轨迹]
+    K -->|远程请求预算耗尽| Z[标记 budget_exhausted 并保留部分轨迹]
     Y --> I
+    Z --> I
     H -->|仅已完成运行| J[重放重新判分]
 ```
 

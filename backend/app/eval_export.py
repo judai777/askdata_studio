@@ -69,8 +69,8 @@ def _attribution(source: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def export_report(record: dict[str, Any]) -> dict[str, Any]:
-    if record.get("status") not in {"completed", "cancelled"}:
-        raise ValueError("只能导出已完成或已取消的运行")
+    if record.get("status") not in {"completed", "cancelled", "budget_exhausted"}:
+        raise ValueError("只能导出已完成、已取消或预算耗尽的运行")
     provenance = record.get("provenance") or {}
     config = provenance.get("config")
     cases = []
@@ -100,6 +100,7 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
             "config": {key: value for key, value in config.items() if key in SAFE_CONFIG_FIELDS and isinstance(value, (str, int, float, bool))} if isinstance(config, dict) else None,
         },
         "review": _pick(record.get("review"), ("total", "approved", "rejected", "pending", "stale")),
+        "request_budget": _pick(record.get("request_budget"), ("limit", "used", "exhausted")),
         "summary": {**(_pick(summary, ("total", "passed", "completion", "safety", "process", "pass3")) or {}),
                     "metrics": _metrics(summary.get("metrics")),
                     "stage_metrics": _stages(summary.get("stage_metrics")),

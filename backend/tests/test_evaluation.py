@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from app.evaluation import EvaluationService, _fixture_hash, aggregate_metrics, aggregate_stages, attribute_failure, attempt_metrics, combine_attempts, compare_records, failure_summary, fixture_engine, grade, oracle_sql, task_catalog
 from app.eval_provenance import provenance_snapshot
 from app.eval_export import export_report
+from app.model_client import ModelRequestBudgetExceeded
 from app.config import Settings
 from app.main import app
 
@@ -98,7 +99,7 @@ class EvaluationTest(unittest.TestCase):
 
     def test_live_run_records_provenance_without_model_call(self) -> None:
         config = Settings(api_key="test-secret-key", llm_model="test-chat")
-        fake = SimpleNamespace(config=config, model_client=SimpleNamespace(enabled=True, telemetry_enabled=False, telemetry=[]), workflow=SimpleNamespace(database_engine=None))
+        fake = SimpleNamespace(config=config, model_client=SimpleNamespace(enabled=True, telemetry_enabled=False, telemetry=[], configure_request_budget=lambda _limit: None, request_count=0, request_budget_exhausted=False), workflow=SimpleNamespace(database_engine=None))
         with patch("app.evaluation.AskDataService", return_value=fake):
             run = EvaluationService().run("live", ["guard.restricted_database"])
         self.assertEqual(run["summary"]["passed"], 1)
@@ -109,7 +110,7 @@ class EvaluationTest(unittest.TestCase):
 
     def test_live_run_persists_stage_trace_and_summary(self) -> None:
         config = Settings(api_key="test-secret-key", llm_model="test-chat")
-        fake = SimpleNamespace(config=config, model_client=SimpleNamespace(enabled=True, telemetry_enabled=False, telemetry=[]), workflow=SimpleNamespace(database_engine=None, stage_telemetry=[]))
+        fake = SimpleNamespace(config=config, model_client=SimpleNamespace(enabled=True, telemetry_enabled=False, telemetry=[], configure_request_budget=lambda _limit: None, request_count=0, request_budget_exhausted=False), workflow=SimpleNamespace(database_engine=None, stage_telemetry=[]))
         service = EvaluationService()
         verdict = {"passed": False, "checks": {"execution": False}, "dimensions": {"completion": False, "safety": True, "process": False}}
         def execute(*_args, **_kwargs):
@@ -124,6 +125,44 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(run["cases"][0]["failure_attribution"]["stage"], "preprocess")
         self.assertEqual(run["summary"]["failure_summary"], [{"kind": "stage", "stage": "preprocess", "count": 1}])
         self.assertEqual(service.get_run(run["id"], replay=True)["summary"]["stage_metrics"][0]["elapsed_ms"], 8.5)
+
+    def test_remote_request_budget_stops_remaining_tasks_and_keeps_report(self) -> None:
+        config = Settings(api_key="test-secret-key", llm_model="test-chat")
+        model = SimpleNamespace(enabled=True, telemetry_enabled=False, telemetry=[], request_count=0, request_budget_exhausted=False, configure_request_budget=lambda _limit: None)
+        fake = SimpleNamespace(config=config, model_client=model, workflow=SimpleNamespace(database_engine=None, stage_telemetry=[]))
+        service = EvaluationService()
+        calls = []
+        def execute(task, *_args, **_kwargs):
+            calls.append(task["id"])
+            model.request_count = 1
+            model.request_budget_exhausted = True
+            raise ModelRequestBudgetExceeded("远程请求预算已耗尽")
+        with patch("app.evaluation.AskDataService", return_value=fake), patch.object(service, "_execute_case", side_effect=execute):
+            run = service.run("live", ["mock.region_sales", "metric.paid_vs_list"], request_limit=1)
+        self.assertEqual(run["status"], "budget_exhausted")
+        self.assertEqual(calls, ["mock.region_sales"])
+        self.assertEqual(run["request_budget"], {"limit": 1, "used": 1, "exhausted": True})
+        self.assertEqual(run["progress"]["completed_attempts"], 1)
+        self.assertEqual(len(run["cases"]), 1)
+        self.assertEqual(service.export(run["id"])["request_budget"]["used"], 1)
+        with self.assertRaisesRegex(ValueError, "不能重放"):
+            service.get_run(run["id"], replay=True)
+
+    def test_request_budget_api_validation(self) -> None:
+        service = EvaluationService()
+        self.assertEqual(service._request_limit("live", None), 50)
+        self.assertIsNone(service._request_limit("demo", None))
+        for value in (0, 101, True):
+            with self.assertRaises(ValueError):
+                service._request_limit("live", value)
+        with self.assertRaises(ValueError):
+            service._request_limit("demo", 20)
+        with TestClient(app) as client:
+            token = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"}).json()["access_token"]
+            headers = {"Authorization": f"Bearer {token}"}
+            base = {"mode": "live", "task_ids": ["mock.region_sales"]}
+            self.assertEqual(client.post("/api/eval/runs/start", headers=headers, json={**base, "request_limit": 101}).status_code, 400)
+            self.assertEqual(client.post("/api/eval/runs/start", headers=headers, json={**base, "request_limit": True}).status_code, 422)
 
     def test_wrong_result_and_write_sql_fail(self) -> None:
         task = task_catalog()["tasks"][0]
@@ -354,6 +393,10 @@ class EvaluationTest(unittest.TestCase):
         new = {**base, "id": "candidate001", "cases": [{"task_id": "a", "grade": {"passed": True, "checks": {}}, "metrics": measured}]}
         self.assertEqual(compare_records(base, new)["cases"][0]["cost_change"]["elapsed_ms_delta"], 300)
         self.assertIsNone(compare_records(base, new)["cases"][0]["cost_change"]["total_tokens_delta"])
+        self.assertEqual(compare_records(base, new)["budget_comparison"]["status"], "unknown")
+        before_budget = {**base, "request_budget": {"limit": 20, "used": 10, "exhausted": False}}
+        after_budget = {**new, "request_budget": {"limit": 50, "used": 11, "exhausted": False}}
+        self.assertEqual(compare_records(before_budget, after_budget)["budget_comparison"], {"status": "changed", "baseline_limit": 20, "candidate_limit": 50})
 
     def test_stage_aggregation_and_comparison_preserve_unknowns(self) -> None:
         self.assertIsNone(aggregate_stages([]))

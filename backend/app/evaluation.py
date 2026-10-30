@@ -289,7 +289,13 @@ def compare_records(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         changes.append({"task_id": task_id, "query": after.get("query") or before.get("query"), "kind": after.get("kind", "model"), "state": state, "before_passed": prior_passed, "after_passed": current_passed, "check_changes": check_changes, "cost_change": cost_change, "stage_changes": stage_changes, "attribution_change": attribution_change})
     order = {"regressed": 0, "improved": 1, "still_failed": 2, "still_passed": 3}
     changes.sort(key=lambda item: (order[item["state"]], item["task_id"]))
-    return {"baseline": {"id": baseline["id"], "model": baseline.get("model"), "started_at": baseline.get("started_at")}, "candidate": {"id": candidate["id"], "model": candidate.get("model"), "started_at": candidate.get("started_at")}, "mode": baseline["mode"], "trials": baseline.get("trials", 1), "task_version": baseline["task_version"], "fixture_hash": baseline["fixture_hash"], "provenance": compare_provenance(baseline.get("provenance"), candidate.get("provenance")), "counts": {"common": len(common), **counts}, "only_baseline": sorted(base_cases.keys() - new_cases.keys()), "only_candidate": sorted(new_cases.keys() - base_cases.keys()), "cases": changes}
+    base_budget, candidate_budget = baseline.get("request_budget"), candidate.get("request_budget")
+    budget_comparison = {
+        "status": "unknown" if not base_budget or not candidate_budget else "same" if base_budget.get("limit") == candidate_budget.get("limit") else "changed",
+        "baseline_limit": base_budget.get("limit") if base_budget else None,
+        "candidate_limit": candidate_budget.get("limit") if candidate_budget else None,
+    }
+    return {"baseline": {"id": baseline["id"], "model": baseline.get("model"), "started_at": baseline.get("started_at")}, "candidate": {"id": candidate["id"], "model": candidate.get("model"), "started_at": candidate.get("started_at")}, "mode": baseline["mode"], "trials": baseline.get("trials", 1), "task_version": baseline["task_version"], "fixture_hash": baseline["fixture_hash"], "provenance": compare_provenance(baseline.get("provenance"), candidate.get("provenance")), "budget_comparison": budget_comparison, "counts": {"common": len(common), **counts}, "only_baseline": sorted(base_cases.keys() - new_cases.keys()), "only_candidate": sorted(new_cases.keys() - base_cases.keys()), "cases": changes}
 
 
 class EvaluationService:
@@ -424,8 +430,21 @@ class EvaluationService:
             raise ValueError("模式或任务选择无效；最多 5 题，三次实时试验最多 3 题")
         return indexed
 
-    def start(self, mode: str, task_ids: list[str], trials: int = 1, fixture_id: str = "base") -> dict[str, Any]:
+    @staticmethod
+    def _request_limit(mode: str, request_limit: int | None) -> int | None:
+        if mode == "demo":
+            if request_limit is not None:
+                raise ValueError("离线演示不能设置远程请求上限")
+            return None
+        if request_limit is None:
+            return 50
+        if type(request_limit) is not int or not 1 <= request_limit <= 100:
+            raise ValueError("远程请求上限必须在 1 到 100 次之间")
+        return request_limit
+
+    def start(self, mode: str, task_ids: list[str], trials: int = 1, fixture_id: str = "base", request_limit: int | None = None) -> dict[str, Any]:
         indexed = self._validate(mode, task_ids, trials)
+        request_limit = self._request_limit(mode, request_limit)
         fixture_hash = _fixture_hash(fixture_id)
         check_service = AskDataService() if mode == "live" else None
         if check_service and not check_service.model_client.enabled:
@@ -439,8 +458,9 @@ class EvaluationService:
             self._cancel_event = Event()
             total = sum(1 if indexed[task_id].get("kind") == "security_probe" else trials for task_id in task_ids)
             queued = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "queued", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": self.catalog()["version"], "fixture_hash": fixture_hash, "oracle_hash": _oracle_hash(), "provenance": provenance, "review": self.review_summary(task_ids), "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": "", "model": "offline-demo" if mode == "demo" else "configured-remote", "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
+            queued["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
             self._save(queued)
-            self._executor.submit(self._run_background, mode, task_ids, trials, run_id, fixture_id, self._cancel_event)
+            self._executor.submit(self._run_background, mode, task_ids, trials, run_id, fixture_id, self._cancel_event, request_limit)
         return {"id": run_id, "status": "queued"}
 
     def cancel(self, run_id: str) -> dict[str, str]:
@@ -459,12 +479,20 @@ class EvaluationService:
         self._save(record)
         return record
 
-    def _run_background(self, mode: str, task_ids: list[str], trials: int, run_id: str, fixture_id: str, cancel_event: Event) -> None:
+    def _finish_budget_exhausted(self, record: dict[str, Any]) -> dict[str, Any]:
+        record["status"] = "budget_exhausted"
+        record["finished_at"] = datetime.now(timezone.utc).isoformat()
+        record["progress"]["current_task"] = None
+        self._summarize(record)
+        self._save(record)
+        return record
+
+    def _run_background(self, mode: str, task_ids: list[str], trials: int, run_id: str, fixture_id: str, cancel_event: Event, request_limit: int | None = None) -> None:
         try:
             if cancel_event.is_set():
                 self._finish_cancelled(self.get_run(run_id))
             else:
-                self.run(mode, task_ids, trials, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event)
+                self.run(mode, task_ids, trials, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event, request_limit=request_limit)
         except Exception as exc:
             record = self.get_run(run_id)
             record["status"] = "failed"
@@ -486,17 +514,19 @@ class EvaluationService:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def run(self, mode: str, task_ids: list[str], trials: int = 1, *, run_id: str | None = None, fixture_id: str = "base", cancel_event: Event | None = None) -> dict[str, Any]:
+    def run(self, mode: str, task_ids: list[str], trials: int = 1, *, run_id: str | None = None, fixture_id: str = "base", cancel_event: Event | None = None, request_limit: int | None = None) -> dict[str, Any]:
         with fixture_engine(fixture_id) as engine:
-            return self._run_on_engine(mode, task_ids, trials, engine, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event)
+            return self._run_on_engine(mode, task_ids, trials, engine, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event, request_limit=request_limit)
 
-    def _run_on_engine(self, mode: str, task_ids: list[str], trials: int, engine: DuckDbEngine, *, run_id: str | None, fixture_id: str, cancel_event: Event | None = None) -> dict[str, Any]:
+    def _run_on_engine(self, mode: str, task_ids: list[str], trials: int, engine: DuckDbEngine, *, run_id: str | None, fixture_id: str, cancel_event: Event | None = None, request_limit: int | None = None) -> dict[str, Any]:
         indexed = self._validate(mode, task_ids, trials)
+        request_limit = self._request_limit(mode, request_limit)
         catalog = self.catalog()
         service = AskDataService() if mode == "live" else None
         if service and not service.model_client.enabled:
             raise ValueError("实时评测需要配置 LLM_API_KEY")
         if service:
+            service.model_client.configure_request_budget(request_limit)
             service.model_client.telemetry_enabled = True
             service.workflow.stage_telemetry_enabled = True
             service.workflow.stage_telemetry = []
@@ -504,6 +534,7 @@ class EvaluationService:
         run_id = run_id or uuid.uuid4().hex[:12]
         total = sum(1 if indexed[task_id].get("kind") == "security_probe" else trials for task_id in task_ids)
         record: dict[str, Any] = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "running", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": catalog["version"], "fixture_hash": _fixture_hash(fixture_id), "oracle_hash": _oracle_hash(), "provenance": provenance_snapshot(mode, service.config if service else None), "review": self.review_summary(task_ids), "model": service.config.llm_model if service else "offline-demo", "started_at": datetime.now(timezone.utc).isoformat(), "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
+        record["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
         self._save(record)
         for task_id in task_ids:
             if cancel_event and cancel_event.is_set():
@@ -529,14 +560,21 @@ class EvaluationService:
                     verdict = {"checks": {"execution": False}, "passed": False, "dimensions": {"completion": False, "safety": False, "process": False}}
                 calls = service.model_client.telemetry[telemetry_start:] if service else []
                 stages = service.workflow.stage_telemetry[stage_start:] if service else []
+                if service:
+                    record["request_budget"]["used"] = service.model_client.request_count
+                    record["request_budget"]["exhausted"] = service.model_client.request_budget_exhausted
                 attempts.append({"trial": trial + 1, "result": raw, "grade": verdict, "error": error, "model_calls": calls, "stages": stages, "metrics": attempt_metrics((time.monotonic() - started) * 1000, calls)})
                 record["progress"]["completed_attempts"] += 1
                 record["progress"]["current_trial"] = trial + 1
                 self._save(record)
+                if service and service.model_client.request_budget_exhausted:
+                    break
             if attempts:
                 record["cases"].append({"task_id": task_id, "category": task["category"], "query": task["query"], "kind": task.get("kind", "model"), "attempts": attempts, "incomplete": len(attempts) < planned_trials, "metrics": aggregate_metrics(attempts), "stage_metrics": aggregate_stages([stage for attempt in attempts for stage in attempt["stages"]]), "result": attempts[0]["result"], "grade": combine_attempts(attempts), "error": next((a["error"] for a in attempts if a["error"]), None), "pass3": len(attempts) == 3 and all(a["grade"]["passed"] for a in attempts)})
                 self._summarize(record)
                 self._save(record)
+            if service and service.model_client.request_budget_exhausted:
+                return self._finish_budget_exhausted(record)
             if cancel_event and cancel_event.is_set():
                 return self._finish_cancelled(record)
         with self._lock:
@@ -588,7 +626,7 @@ class EvaluationService:
         result = []
         for path in sorted(RUN_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:30]:
             run = json.loads(path.read_text(encoding="utf-8"))
-            item = {key: run[key] for key in ("id", "mode", "model", "fixture_id", "started_at", "status", "progress", "summary") if key in run}
+            item = {key: run[key] for key in ("id", "mode", "model", "fixture_id", "started_at", "status", "progress", "summary", "request_budget") if key in run}
             if item.get("id") == self._active_run_id and item.get("status") in {"queued", "running"} and self._cancel_event and self._cancel_event.is_set():
                 item["status"] = "cancel_requested"
             result.append(item)

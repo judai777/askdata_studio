@@ -6,7 +6,7 @@ import urllib.error
 from unittest.mock import MagicMock, patch
 
 from app.config import Settings
-from app.model_client import ModelClient
+from app.model_client import ModelClient, ModelRequestBudgetExceeded
 
 
 class ModelTelemetryTest(unittest.TestCase):
@@ -43,6 +43,32 @@ class ModelTelemetryTest(unittest.TestCase):
         self.assertEqual(self.client.telemetry[-1]["kind"], "rerank")
         self.assertFalse(self.client.telemetry[-1]["success"])
         self.assertNotIn("network-private", json.dumps(self.client.telemetry))
+
+    def test_request_budget_counts_retries_before_network_call(self) -> None:
+        client = ModelClient(Settings(api_key="test-secret", max_retries=2))
+        client.telemetry_enabled = True
+        client.configure_request_budget(1)
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("network-private")) as request:
+            with patch("time.sleep"):
+                with self.assertRaises(ModelRequestBudgetExceeded):
+                    client.chat("private prompt", "private question")
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(client.request_count, 1)
+        self.assertTrue(client.request_budget_exhausted)
+        self.assertEqual(client.telemetry[0]["attempts"], 1)
+        self.assertNotIn("network-private", json.dumps(client.telemetry))
+
+    def test_exact_budget_can_complete_without_exhaustion(self) -> None:
+        self.client.configure_request_budget(1)
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"choices": [{"message": {"content": "ok"}}]}'
+        with patch("urllib.request.urlopen", return_value=response) as request:
+            self.assertEqual(self.client.chat("system", "question"), "ok")
+            self.assertFalse(self.client.request_budget_exhausted)
+            with self.assertRaises(ModelRequestBudgetExceeded):
+                self.client.chat("system", "second question")
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(self.client.request_count, 1)
 
 
 if __name__ == "__main__":

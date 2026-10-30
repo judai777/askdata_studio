@@ -6,9 +6,14 @@ import re
 import time
 import urllib.error
 import urllib.request
+from threading import Lock
 from typing import Any
 
 from .config import Settings, settings
+
+
+class ModelRequestBudgetExceeded(Exception):
+    """评测运行达到远程 HTTP 请求上限。"""
 
 
 class ModelClient:
@@ -20,6 +25,25 @@ class ModelClient:
         self.telemetry_enabled = False
         self.telemetry: list[dict[str, Any]] = []
         self.current_stage: str | None = None
+        self.request_budget_limit: int | None = None
+        self.request_count = 0
+        self.request_budget_exhausted = False
+        self._budget_lock = Lock()
+
+    def configure_request_budget(self, limit: int) -> None:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("远程请求上限必须在 1 到 100 次之间")
+        with self._budget_lock:
+            self.request_budget_limit = limit
+            self.request_count = 0
+            self.request_budget_exhausted = False
+
+    def _reserve_request(self) -> None:
+        with self._budget_lock:
+            if self.request_budget_limit is not None and self.request_count >= self.request_budget_limit:
+                self.request_budget_exhausted = True
+                raise ModelRequestBudgetExceeded("远程请求预算已耗尽")
+            self.request_count += 1
 
     @property
     def enabled(self) -> bool:
@@ -107,6 +131,12 @@ class ModelClient:
         started = time.monotonic()
         last_error: Exception | None = None
         for attempt in range(self.config.max_retries + 1):
+            try:
+                self._reserve_request()
+            except ModelRequestBudgetExceeded:
+                if attempt:
+                    self._record_telemetry(url, payload, started, attempt, False, None)
+                raise
             try:
                 with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
                     result = json.loads(response.read().decode("utf-8"))

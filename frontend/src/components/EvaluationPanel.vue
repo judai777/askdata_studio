@@ -13,6 +13,7 @@ const exportBusy = ref(false)
 const error = ref("")
 const mode = ref<"demo" | "live">("demo")
 const trials = ref<1 | 3>(1)
+const requestLimit = ref<20 | 50 | 100>(50)
 const fixtureId = ref<EvalFixtureId>("base")
 const auditFixtures: { id: EvalFixtureId; label: string }[] = [{ id: "base", label: "原始" }, { id: "edge_v1", label: "边界 v1" }, { id: "edge_v2", label: "边界 v2" }]
 const expanded = ref("")
@@ -73,10 +74,10 @@ function toggle(id: string) {
 async function start() {
   error.value = ""
   if (!selected.value.length || selected.value.length > 5 || (mode.value === "live" && trials.value === 3 && selected.value.length > 3)) { error.value = "请选择 1–5 题；三次实时试验最多 3 题"; return }
-  if (mode.value === "live" && !window.confirm(`将调用远程 Chat、Embedding 和 Rerank API，最多执行 ${selected.value.length * trials.value} 次任务试验。继续吗？`)) return
+  if (mode.value === "live" && !window.confirm(`将调用远程 Chat、Embedding 和 Rerank API，最多执行 ${selected.value.length * trials.value} 次任务试验、发送 ${requestLimit.value} 次 HTTP 请求（重试也计入）。继续吗？`)) return
   busy.value = true
   try {
-    const started = await api.evalStart(mode.value, selected.value, trials.value, fixtureId.value)
+    const started = await api.evalStart(mode.value, selected.value, trials.value, fixtureId.value, mode.value === "live" ? requestLimit.value : undefined)
     current.value = await api.evalDetail(started.id)
     watchRun()
     runs.value = await api.evalRuns()
@@ -208,10 +209,11 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <label class="eval-option"><input v-model="mode" type="radio" value="demo"> 离线演示 · 无需模型</label>
         <label class="eval-option"><input v-model="mode" type="radio" value="live"> 实时评测 · 调用远程 API</label>
         <label class="eval-option">独立试验 <select v-model.number="trials"><option :value="1">1 次</option><option :value="3">3 次（Pass³）</option></select></label>
+        <label v-if="mode === 'live'" class="eval-option">远程请求上限 <select v-model.number="requestLimit"><option :value="20">20 次</option><option :value="50">50 次</option><option :value="100">100 次</option></select></label>
         <label class="eval-option">数据集 <select v-model="fixtureId"><option value="base">原始数据</option><option value="edge_v1">边界数据 v1</option><option value="edge_v2">边界数据 v2</option></select></label>
         <p v-if="fixtureId !== 'base'" class="eval-notice">边界数据在临时目录加入折扣、非已支付和日期端点记录；v2 再加入不同订单的同额实付记录。原始 CSV 不会改变。</p>
         <p v-if="mode === 'demo'" class="eval-notice">演示结果由固定 oracle 生成，用于体验流程，不代表模型准确率。</p>
-        <p v-else class="eval-notice">调用已配置的 Chat、Embedding、Rerank；顺序执行。三次试验最多选 3 题，可能产生 API 费用。权限护栏题不调用模型。</p>
+        <p v-else class="eval-notice">调用已配置的 Chat、Embedding、Rerank；顺序执行。三次试验最多选 3 题，可能产生 API 费用。请求上限包含重试，不是费用上限；权限护栏题不调用模型。</p>
         <button class="eval-primary" :disabled="busy || ['queued', 'running', 'cancel_requested'].includes(current?.status || '') || !selected.length" @click="start">{{ busy ? '正在启动…' : '开始评测' }}</button>
         <p v-if="error" class="eval-error">{{ error }}</p>
       </section>
@@ -221,10 +223,12 @@ function failureLabel(value: EvalFailureAttribution | null) {
           <div class="eval-meta">{{ current.mode === 'demo' ? '离线演示' : '实时评测' }} · {{ current.model }} · {{ current.id }}</div>
           <p v-if="['queued', 'running', 'cancel_requested'].includes(current.status || '')" class="eval-notice">{{ current.status === 'cancel_requested' ? '正在等待当前试验结束，随后取消' : '运行中' }}：{{ current.progress?.completed_attempts || 0 }} / {{ current.progress?.total_attempts || 0 }} 次试验完成 <span v-if="current.progress?.current_task">· 当前 {{ current.progress.current_task }}</span></p>
           <p v-if="current.status === 'cancelled'" class="eval-notice">已取消后续试验；保留已完成的 {{ current.progress?.completed_attempts || 0 }} 次试验。部分完成的题不计入通过数。</p>
+          <p v-if="current.status === 'budget_exhausted'" class="eval-notice">远程请求预算已耗尽，后续试验已停止；已有轨迹保留，部分完成的题不计入通过数。</p>
           <p v-if="current.status === 'failed' || current.status === 'interrupted'" class="eval-error">{{ current.error || '运行未完成' }}</p>
           <div class="eval-score"><strong>{{ current.summary.passed }} / {{ current.summary.total }}</strong><span>任务通过</span></div>
           <div class="eval-metrics"><span>完成 {{ current.summary.completion }}/{{ current.summary.total }}</span><span>安全 {{ current.summary.safety }}/{{ current.summary.total }}</span><span>过程 {{ current.summary.process }}/{{ current.summary.total }}</span></div>
           <p v-if="current.summary.metrics" class="eval-meta">试验总耗时 {{ formatDuration(current.summary.metrics.elapsed_ms) }} · 远程调用 {{ current.summary.metrics.model_calls }} 次 · Token {{ current.summary.metrics.total_tokens ?? '未知' }} <span v-if="current.summary.metrics.successful_calls">（用量覆盖 {{ current.summary.metrics.usage_calls }}/{{ current.summary.metrics.successful_calls }} 次成功调用）</span></p>
+          <p v-if="current.request_budget" class="eval-meta">远程 HTTP 请求 {{ current.request_budget.used }}/{{ current.request_budget.limit }} 次（含重试）{{ current.request_budget.exhausted ? ' · 已耗尽' : '' }}；这是调用上限，不代表费用。</p>
           <details v-if="current.summary.stage_metrics?.length" class="eval-provenance"><summary>阶段汇总（{{ current.summary.stage_metrics.length }} 类）</summary><p class="eval-meta">阶段累计耗时用于定位；MCP 工具耗时已包含在单库 Agent 阶段中。</p><p v-for="stage in current.summary.stage_metrics" :key="stage.stage" class="eval-meta">{{ stageLabel(stage.stage) }}：{{ stageDuration(stage.elapsed_ms) }} · {{ stage.calls }} 次 · 失败 {{ stage.failures }} 次</p></details>
           <p v-if="current.summary.failure_summary?.length" class="eval-notice">失败归因（按失败试验计）：<span v-for="item in current.summary.failure_summary" :key="`${item.kind}-${item.stage}`">{{ failureLabel({ kind: item.kind, stage: item.stage, failed_checks: [] }) }} {{ item.count }} 次　</span></p>
           <p v-if="current.trials === 3" class="eval-meta">{{ current.mode === 'live' ? '模型任务 Pass³' : '演示流程 Pass³' }}：{{ current.summary.pass3 }} / {{ current.model_task_count ?? current.cases.filter(item => item.kind !== 'security_probe').length }}。权限护栏题单独运行一次。</p>
@@ -234,7 +238,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
           <p v-else-if="current.mode === 'live'" class="eval-meta">旧运行缺少实现版本信息。</p>
           <details v-if="current.mode === 'live' && current.provenance?.config" class="eval-provenance"><summary>查看本次非敏感模型配置</summary><pre>{{ JSON.stringify(current.provenance.config, null, 2) }}</pre></details>
           <button class="eval-secondary" :disabled="busy || (current.status !== undefined && current.status !== 'completed')" @click="replay">重放并重新判分</button>
-          <button class="eval-secondary" :disabled="exportBusy || !['completed', 'cancelled'].includes(current.status || 'completed')" @click="exportRun">{{ exportBusy ? '正在导出…' : '下载评测摘要' }}</button>
+          <button class="eval-secondary" :disabled="exportBusy || !['completed', 'cancelled', 'budget_exhausted'].includes(current.status || 'completed')" @click="exportRun">{{ exportBusy ? '正在导出…' : '下载评测摘要' }}</button>
           <button v-if="['queued', 'running', 'cancel_requested'].includes(current.status || '')" class="eval-secondary eval-cancel" :disabled="cancelBusy || current.status === 'cancel_requested'" @click="cancelRun">{{ cancelBusy ? '正在请求…' : '停止后续试验' }}</button>
           <article v-for="item in current.cases" :key="item.task_id" class="eval-result">
             <button @click="expanded = expanded === item.task_id ? '' : item.task_id"><b :class="item.incomplete ? 'fail' : item.grade.passed ? 'pass' : 'fail'">{{ item.incomplete ? '未完成' : item.grade.passed ? '通过' : '失败' }}</b><span>{{ item.query }}</span><span>⌄</span></button>
@@ -268,6 +272,8 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <p v-if="comparison.provenance?.status === 'unknown'" class="eval-notice">版本信息不足：至少一份旧运行缺少实现快照，无法判断提示词、工作流和配置是否一致。</p>
         <p v-else-if="comparison.provenance?.status === 'changed'" class="eval-notice">实现已变化：下方列出提示词、工作流或模型配置的差异。分数仍可对比。</p>
         <p v-else-if="comparison.provenance?.status === 'same'" class="eval-notice">实现快照一致；远程服务版本仍可能变化。</p>
+        <p v-if="comparison.mode === 'live' && comparison.budget_comparison?.status === 'changed'" class="eval-notice">远程请求上限不同：{{ comparison.budget_comparison.baseline_limit }} → {{ comparison.budget_comparison.candidate_limit }}；差异可能影响完成率。</p>
+        <p v-else-if="comparison.mode === 'live' && comparison.budget_comparison?.status === 'unknown'" class="eval-notice">至少一份旧运行缺少远程请求上限信息，无法确认预算一致。</p>
         <details v-if="comparison.provenance?.changes.length" class="eval-provenance"><summary>查看 {{ comparison.provenance.changes.length }} 项实现差异</summary><p v-for="change in comparison.provenance.changes" :key="change.field" class="eval-meta">{{ change.field }}：{{ change.before ?? '未知' }} → {{ change.after ?? '未知' }}</p></details>
         <div class="eval-metrics"><span class="fail">退化 {{ comparison.counts.regressed }}</span><span class="pass">改善 {{ comparison.counts.improved }}</span><span>保持通过 {{ comparison.counts.still_passed }}</span><span>保持失败 {{ comparison.counts.still_failed }}</span></div>
         <p v-if="comparison.only_baseline.length" class="eval-meta">仅基线：{{ comparison.only_baseline.join('、') }}</p>
