@@ -1,0 +1,9 @@
+{
+  "description": "继承 edge_v1，增加同地区、不同订单但实付金额相同的已支付记录，用于识别按金额去重的聚合错误。",
+  "extends": "edge_v1",
+  "append_rows": {
+    "orders_current": [
+      {"order_id": 99009, "region": "华东", "category": "企业服务", "order_amount": 1000, "paid_amount": 700, "status": "已支付", "order_date": "2026-08-15", "customer_id": 101, "product_id": 101}
+    ]
+  }
+}

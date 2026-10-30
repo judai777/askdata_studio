@@ -1,0 +1,15 @@
+{
+  "mock.region_sales": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' GROUP BY region",
+  "mock.customer_level": "SELECT c.customer_level, ROUND(SUM(o.paid_amount), 2) AS sales FROM orders_current o JOIN customers c ON o.customer_id = c.customer_id WHERE o.status = '已支付' GROUP BY c.customer_level",
+  "mock.target_comparison": "SELECT o.region, ROUND(SUM(o.paid_amount), 2) AS sales, MAX(t.target_amount) AS target FROM orders_current o JOIN sales_targets t ON o.region = t.region WHERE o.status = '已支付' AND t.target_month = '2026-08' GROUP BY o.region",
+  "mock.date_range": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-08-01' AND order_date < DATE '2026-08-16' GROUP BY region",
+  "mock.clarify_orders": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' GROUP BY region",
+  "guard.restricted_database": "SELECT region FROM orders_current",
+  "metric.paid_vs_list": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-08-01' AND order_date < DATE '2026-09-01' GROUP BY region",
+  "metric.list_amount": "SELECT region, ROUND(SUM(order_amount), 2) AS original_amount FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-08-01' AND order_date < DATE '2026-09-01' GROUP BY region",
+  "time.single_day": "SELECT ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-08-15' AND order_date < DATE '2026-08-16'",
+  "time.history_july": "SELECT ROUND(SUM(paid_amount), 2) AS sales FROM orders_history WHERE status = '已支付' AND order_date >= DATE '2026-07-01' AND order_date < DATE '2026-08-01'",
+  "join.customer_orders": "SELECT c.customer_level, COUNT(DISTINCT o.order_id) AS order_count, ROUND(SUM(o.paid_amount), 2) AS sales FROM orders_current o JOIN customers c ON o.customer_id = c.customer_id WHERE o.status = '已支付' AND o.order_date >= DATE '2026-08-01' AND o.order_date < DATE '2026-09-01' GROUP BY c.customer_level",
+  "grain.unique_customers": "SELECT region, COUNT(DISTINCT customer_id) AS customer_count FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-08-01' AND order_date < DATE '2026-09-01' GROUP BY region",
+  "time.july_august": "SELECT '2026-07' AS month, ROUND(SUM(paid_amount), 2) AS sales FROM orders_history WHERE status = '已支付' AND order_date >= DATE '2026-07-01' AND order_date < DATE '2026-08-01' UNION ALL SELECT '2026-08' AS month, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-08-01' AND order_date < DATE '2026-09-01'"
+}

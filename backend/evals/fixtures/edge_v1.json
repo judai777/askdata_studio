@@ -1,0 +1,17 @@
+{
+  "description": "加入折扣、非已支付高金额、月初月末和单日边界订单，专用于评测。",
+  "append_rows": {
+    "orders_current": [
+      {"order_id": 99001, "region": "华东", "category": "企业服务", "order_amount": 1000, "paid_amount": 700, "status": "已支付", "order_date": "2026-08-15", "customer_id": 101, "product_id": 101},
+      {"order_id": 99002, "region": "华东", "category": "企业服务", "order_amount": 500, "paid_amount": 400, "status": "已支付", "order_date": "2026-08-16", "customer_id": 101, "product_id": 101},
+      {"order_id": 99003, "region": "华东", "category": "企业服务", "order_amount": 900, "paid_amount": 850, "status": "已取消", "order_date": "2026-08-15", "customer_id": 101, "product_id": 101},
+      {"order_id": 99004, "region": "华南", "category": "数据产品", "order_amount": 100, "paid_amount": 90, "status": "已支付", "order_date": "2026-08-01", "customer_id": 102, "product_id": 102},
+      {"order_id": 99005, "region": "华南", "category": "数据产品", "order_amount": 300, "paid_amount": 275, "status": "已支付", "order_date": "2026-08-31", "customer_id": 102, "product_id": 102}
+    ],
+    "orders_history": [
+      {"order_id": 99006, "region": "西南", "category": "安全服务", "order_amount": 600, "paid_amount": 500, "status": "已支付", "order_date": "2026-07-01", "customer_id": 103, "product_id": 103},
+      {"order_id": 99007, "region": "西南", "category": "安全服务", "order_amount": 800, "paid_amount": 750, "status": "已支付", "order_date": "2026-07-31", "customer_id": 103, "product_id": 103},
+      {"order_id": 99008, "region": "西南", "category": "安全服务", "order_amount": 950, "paid_amount": 900, "status": "已退款", "order_date": "2026-07-15", "customer_id": 103, "product_id": 103}
+    ]
+  }
+}

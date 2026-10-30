@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "tasks": {
+    "mock.region_sales": {"intent": "地区维度的已支付实付销售额", "result": "每地区一行，汇总 paid_amount；未支付订单不计入。", "process": "只读查询 orders_current，按 region 分组。", "pitfall": "漏状态过滤在 base 可能不改变结果，须检查 edge_v1。"},
+    "mock.customer_level": {"intent": "客户等级维度的已支付实付销售额", "result": "按 customer_level 汇总 paid_amount，客户与订单通过 customer_id 关联。", "process": "只读查询 orders_current 与 customers。", "pitfall": "按地区代替客户 ID 关联会产生错误归属或重复。"},
+    "mock.target_comparison": {"intent": "地区销售额与对应月份目标对比", "result": "每地区返回已支付实付销售额及 2026-08 的目标金额。", "process": "只读关联 orders_current 与 sales_targets，明确目标月份。", "pitfall": "漏月份过滤会重复计算销售额。"},
+    "route.greeting": {"intent": "普通问候直接回复", "result": "返回已完成的直接回复，不产生数据库查询结果。", "process": "路由为 direct_response，不调用数据库工具。", "pitfall": "不能将问候错误路由为问数请求。"},
+    "mock.date_range": {"intent": "8 月 1 日至 15 日的地区实付销售额", "result": "按地区汇总已支付 paid_amount，包含 8 月 15 日，不包含 16 日。", "process": "只读查询 orders_current，显式使用 order_date。", "pitfall": "日期上界采用小于 8 月 16 日。"},
+    "mock.clarify_orders": {"intent": "先确认当前或历史范围，再按选择查询销售额", "result": "选择当前订单后，返回 orders_current 的地区已支付实付销售额。", "process": "先等待澄清，再按 orders_current 选项恢复，不得直接跳过提问。", "pitfall": "只检查最终 SQL 不能证明曾正确澄清。"},
+    "guard.restricted_database": {"intent": "验证受限账号的数据库隔离", "result": "销售分析员访问 askdata_mock 必须被拒绝。", "process": "在工具执行层以受限身份测试权限，不能仅靠模型拒绝措辞。", "pitfall": "管理员执行成功不代表受限账号权限正确。"},
+    "metric.paid_vs_list": {"intent": "8 月地区实付销售额", "result": "按地区汇总已支付 paid_amount，不能用 order_amount。", "process": "只读查询 orders_current，显式使用时间和实付字段。", "pitfall": "折扣订单能区分实付与原价。"},
+    "metric.list_amount": {"intent": "8 月地区优惠前订单原价", "result": "按地区汇总已支付订单的 order_amount，不能用 paid_amount。", "process": "只读查询 orders_current，显式使用时间和原价字段。", "pitfall": "订单原价与实付金额口径不同。"},
+    "time.single_day": {"intent": "8 月 15 日当天已支付实付销售额", "result": "只汇总 8 月 15 日的已支付 paid_amount。", "process": "日期区间为大于等于 15 日且小于 16 日。", "pitfall": "边界数据包含 15 日取消订单及 16 日已支付订单。"},
+    "time.history_july": {"intent": "7 月历史订单已支付实付销售额", "result": "只汇总 orders_history 中 7 月已支付 paid_amount。", "process": "显式使用历史表和 7 月起止日期。", "pitfall": "边界数据包含 7 月末支付与月中退款订单。"},
+    "join.customer_orders": {"intent": "8 月按客户等级统计订单数和实付销售额", "result": "每等级返回去重 order_id 数量和已支付 paid_amount 总额。", "process": "orders_current 按 customer_id 关联 customers，并过滤 8 月及已支付状态。", "pitfall": "地区关联会重复订单；COUNT(*) 与去重订单数需按 JOIN 粒度核对。"},
+    "grain.unique_customers": {"intent": "8 月各地区去重已支付客户数", "result": "每地区 COUNT(DISTINCT customer_id)，同一客户多笔订单只计一次。", "process": "只读查询 orders_current，过滤 8 月及已支付状态。", "pitfall": "COUNT(*) 或 COUNT(order_id) 会把重复购买客户计多次。"},
+    "time.july_august": {"intent": "分别输出 7 月历史与 8 月当前已支付实付销售额", "result": "恰好两个月份行，7 月来自 orders_history，8 月来自 orders_current。", "process": "分别过滤月份和状态，再按月份汇总或 UNION ALL。", "pitfall": "只查当前表会漏历史月份；跨表合并不能重复月份或混用时间条件。"}
+  }
+}
