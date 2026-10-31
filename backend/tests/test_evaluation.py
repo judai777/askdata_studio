@@ -220,6 +220,9 @@ class EvaluationTest(unittest.TestCase):
             with patch("app.evaluation.REVIEW_RECORD_FILE", record_path):
                 initial = service.reviews()
                 self.assertEqual(initial["counts"]["pending"], 14)
+                readiness = service.benchmark_readiness()
+                self.assertEqual(readiness["existing"], {"total": 14, "approved": 0, "sql_tasks": 12, "with_field_constraints": 9})
+                self.assertEqual(readiness["target"], {"database": "ecommerce_ops", "development": 0, "development_goal": 49, "holdout": 0, "holdout_goal": 381, "total_goal": 430})
                 preview = service.review_preview(task_id)
                 self.assertTrue(preview["oracle_sql"])
                 self.assertEqual(set(preview["expected_rows"]), {"base", "edge_v1", "edge_v2", "edge_v3"})
@@ -228,6 +231,7 @@ class EvaluationTest(unittest.TestCase):
                 self.assertEqual(submitted["status"], "approved")
                 self.assertTrue(record_path.exists())
                 self.assertEqual(service.review_summary([task_id])["approved"], 1)
+                self.assertEqual(service.benchmark_readiness()["existing"]["approved"], 1)
                 self.assertEqual(service.review_preview(task_id)["history"][0]["reviewer"], "demo_admin")
                 original_specs = json.loads((Path(__file__).parents[1] / "evals" / "review_specs.json").read_text(encoding="utf-8"))
                 original_specs["tasks"][task_id]["pitfall"] += "补充审核说明"

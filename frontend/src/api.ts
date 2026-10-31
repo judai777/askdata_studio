@@ -87,6 +87,7 @@ export const api = {
       method: "DELETE",
     }),
   evalCatalog: () => request<{ version: string; tasks: EvalTask[] }>("/api/eval/catalog"),
+  evalBenchmarkReadiness: () => request<EvalBenchmarkReadiness>("/api/eval/benchmark-readiness"),
   evalModels: () => request<EvalModelCatalog>("/api/eval/models"),
   evalReviews: () => request<EvalReviewCatalog>("/api/eval/reviews"),
   evalReviewPreview: (taskId: string) => request<EvalReviewPreview>(`/api/eval/reviews/${encodeURIComponent(taskId)}/preview`),
@@ -107,6 +108,7 @@ export const api = {
 }
 
 export interface EvalTask { id: string; category: string; query: string; route: string; required_tables?: string[] }
+export interface EvalBenchmarkReadiness { task_version: string; existing: { total: number; approved: number; sql_tasks: number; with_field_constraints: number }; target: { database: string; development: number; development_goal: number; holdout: number; holdout_goal: number; total_goal: number } }
 export interface EvalReviewSpec { intent: string; result: string; process: string; pitfall: string }
 export interface EvalReviewRecord { decision: "approved" | "rejected"; note: string; reviewer: string; reviewed_at: string; fingerprint: string }
 export interface EvalReviewItem { task_id: string; query: string; category: string; spec: EvalReviewSpec; fingerprint: string; status: "approved" | "rejected" | "pending" | "stale"; latest: EvalReviewRecord | null }

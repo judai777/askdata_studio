@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { api } from "../api"
-import type { EvalAudit, EvalCalibration, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
+import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
 
 const tasks = ref<EvalTask[]>([])
+const benchmarkReadiness = ref<EvalBenchmarkReadiness | null>(null)
 const selected = ref<string[]>([])
 const runs = ref<EvalRunSummary[]>([])
 const current = ref<EvalRun | null>(null)
@@ -77,11 +78,12 @@ function watchRun() {
 
 onMounted(async () => {
   try {
-    const [catalog, history, reviewCatalog, models] = await Promise.all([api.evalCatalog(), api.evalRuns(), api.evalReviews(), api.evalModels()])
+    const [catalog, history, reviewCatalog, models, readiness] = await Promise.all([api.evalCatalog(), api.evalRuns(), api.evalReviews(), api.evalModels(), api.evalBenchmarkReadiness()])
     tasks.value = catalog.tasks
     selected.value = catalog.tasks.slice(0, 5).map(task => task.id)
     runs.value = history
     reviews.value = reviewCatalog
+    benchmarkReadiness.value = readiness
     modelCatalog.value = models
     selectedModel.value = models.default
     const completed = history.filter(run => !run.status || run.status === "completed")
@@ -270,9 +272,10 @@ async function submitReview(decision: "approved" | "rejected") {
   try {
     const taskId = reviewPreview.value.task_id
     await api.evalSubmitReview(taskId, decision, reviewNote.value, reviewPreview.value.fingerprint)
-    const [catalog, preview] = await Promise.all([api.evalReviews(), api.evalReviewPreview(taskId)])
+    const [catalog, preview, readiness] = await Promise.all([api.evalReviews(), api.evalReviewPreview(taskId), api.evalBenchmarkReadiness()])
     reviews.value = catalog
     reviewPreview.value = preview
+    benchmarkReadiness.value = readiness
     reviewNote.value = ""
   } catch (caught) { reviewError.value = String(caught) }
   finally { reviewBusy.value = false }
@@ -486,6 +489,12 @@ function failureLabel(value: EvalFailureAttribution | null) {
         </article>
         <p class="eval-notice">TP/FP/FN/TN 以人工标签为参照；样本少或题目未经审核时，这些数字只用于定位分歧。</p>
       </template>
+    </section>
+    <section v-if="benchmarkReadiness" class="eval-card eval-history">
+      <h2>8 · 430 题基准准备度</h2>
+      <p>现有题属于 askdata_mock；目标基准使用 ecommerce_ops，两组题分别统计。</p>
+      <div class="eval-metrics"><span>现有题 {{ benchmarkReadiness.existing.total }}，已审核 {{ benchmarkReadiness.existing.approved }}</span><span>SQL 题显式字段约束 {{ benchmarkReadiness.existing.with_field_constraints }}/{{ benchmarkReadiness.existing.sql_tasks }}</span><span>目标域开发题 {{ benchmarkReadiness.target.development }}/{{ benchmarkReadiness.target.development_goal }}</span><span>目标域保留题 {{ benchmarkReadiness.target.holdout }}/{{ benchmarkReadiness.target.holdout_goal }}</span></div>
+      <p class="eval-notice">目标总量 {{ benchmarkReadiness.target.total_goal }} 题。现有字段约束还不是完整的目标字段标注；这里显示准备进度，不代表模型成绩。</p>
     </section>
   </div>
 </template>

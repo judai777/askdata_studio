@@ -70,6 +70,11 @@ def eval_catalog(_: AuthUser = Depends(require_admin)) -> dict:
     return evaluation_service.catalog()
 
 
+@router.get("/eval/benchmark-readiness")
+def eval_benchmark_readiness(_: AuthUser = Depends(require_admin)) -> dict:
+    return evaluation_service.benchmark_readiness()
+
+
 @router.get("/eval/models")
 def eval_models(_: AuthUser = Depends(require_admin)) -> dict:
     try:

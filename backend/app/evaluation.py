@@ -326,6 +326,19 @@ class EvaluationService:
     def catalog(self) -> dict[str, Any]:
         return task_catalog()
 
+    def benchmark_readiness(self) -> dict[str, Any]:
+        tasks = self.catalog()["tasks"]
+        reviews = {item["task_id"]: item["status"] for item in self.reviews()["tasks"]}
+        existing = [task for task in tasks if task.get("database") == "askdata_mock" or task.get("id", "").startswith("route.")]
+        target_development = [task for task in tasks if task.get("database") == "ecommerce_ops" and task.get("split") == "development"]
+        target_holdout = [task for task in tasks if task.get("database") == "ecommerce_ops" and task.get("split") == "holdout"]
+        sql_tasks = [task for task in existing if task.get("route") == "database_query" and task.get("kind") != "security_probe"]
+        return {
+            "task_version": self.catalog()["version"],
+            "existing": {"total": len(existing), "approved": sum(reviews.get(task["id"]) == "approved" for task in existing), "sql_tasks": len(sql_tasks), "with_field_constraints": sum(bool(task.get("required_metric_fields") or task.get("required_time_fields")) for task in sql_tasks)},
+            "target": {"database": "ecommerce_ops", "development": len(target_development), "development_goal": 49, "holdout": len(target_holdout), "holdout_goal": 381, "total_goal": 430},
+        }
+
     @staticmethod
     def _review_records() -> dict[str, list[dict[str, Any]]]:
         if not REVIEW_RECORD_FILE.exists():
