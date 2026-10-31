@@ -24,6 +24,7 @@ from .config import BASE_DIR, Settings, settings
 from .eval_models import resolve_model
 from . import eval_labels
 from .eval_grader_version import grader_hash
+from .eval_schema_metrics import aggregate_schema_fields, load_field_targets, score_attempt_fields
 from .eval_provenance import compare_provenance, provenance_snapshot
 from .eval_export import export_report
 from .model_client import ModelClient
@@ -38,6 +39,7 @@ ORACLE_FILE = BASE_DIR / "evals" / "oracles.json"
 MUTANT_FILE = BASE_DIR / "evals" / "mutants.json"
 REVIEW_SPEC_FILE = BASE_DIR / "evals" / "review_specs.json"
 REVIEW_RECORD_FILE = BASE_DIR / "data" / "eval_reviews.json"
+FIELD_TARGET_FILE = BASE_DIR / "evals" / "field_targets.json"
 EDGE_FILE = BASE_DIR / "evals" / "fixtures" / "edge_v1.json"
 EDGE_V2_FILE = BASE_DIR / "evals" / "fixtures" / "edge_v2.json"
 EDGE_V3_FILE = BASE_DIR / "evals" / "fixtures" / "edge_v3.json"
@@ -498,6 +500,7 @@ class EvaluationService:
         if check_service and not check_service.model_client.enabled:
             raise ValueError("实时评测需要配置 LLM_API_KEY")
         provenance = provenance_snapshot(mode, check_service.config if check_service else None)
+        field_targets, field_targets_hash = load_field_targets(FIELD_TARGET_FILE, self.catalog()["version"])
         with self._lock:
             if self._active_run_id:
                 raise RuntimeError("已有后台评测正在运行，请等待完成")
@@ -508,6 +511,7 @@ class EvaluationService:
             queued = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "queued", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": self.catalog()["version"], "fixture_hash": fixture_hash, "oracle_hash": _oracle_hash(), "provenance": provenance, "review": self.review_summary(task_ids), "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": "", "model": model_config.llm_model if model_config else "offline-demo", "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
             queued["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
             queued["grader_hash"] = grader_hash()
+            queued["field_targets"], queued["field_targets_hash"] = field_targets, field_targets_hash
             queued["task_ids"] = list(task_ids)
             if baseline_run_id:
                 queued["baseline_run_id"] = baseline_run_id
@@ -525,6 +529,8 @@ class EvaluationService:
             raise ValueError("旧运行缺少完整实验条件，请重新创建基线")
         if baseline.get("task_version") != self.catalog()["version"] or baseline.get("fixture_hash") != _fixture_hash(baseline.get("fixture_id", "base")) or baseline.get("oracle_hash") != _oracle_hash() or baseline["grader_hash"] != grader_hash():
             raise ValueError("任务、数据、标准答案或判分器已变化，请重新创建基线")
+        if baseline.get("field_targets_hash") and baseline["field_targets_hash"] != load_field_targets(FIELD_TARGET_FILE, self.catalog()["version"])[1]:
+            raise ValueError("目标字段标签已变化，请重新创建基线")
         config = resolve_model("live", model)
         current = provenance_snapshot("live", config)
         previous = baseline.get("provenance") or {}
@@ -608,6 +614,11 @@ class EvaluationService:
         record: dict[str, Any] = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "running", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": catalog["version"], "fixture_hash": _fixture_hash(fixture_id), "oracle_hash": _oracle_hash(), "provenance": provenance_snapshot(mode, service.config if service else None), "review": self.review_summary(task_ids), "model": service.config.llm_model if service else "offline-demo", "started_at": datetime.now(timezone.utc).isoformat(), "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
         record["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
         record["grader_hash"] = grader_hash()
+        if run_id and (RUN_DIR / f"{run_id}.json").exists():
+            queued = self.get_run(run_id)
+            record["field_targets"], record["field_targets_hash"] = queued.get("field_targets", {}), queued.get("field_targets_hash")
+        else:
+            record["field_targets"], record["field_targets_hash"] = load_field_targets(FIELD_TARGET_FILE, catalog["version"])
         record["task_ids"] = list(task_ids)
         if baseline_run_id:
             record["baseline_run_id"] = baseline_run_id
@@ -639,7 +650,8 @@ class EvaluationService:
                 if service:
                     record["request_budget"]["used"] = service.model_client.request_count
                     record["request_budget"]["exhausted"] = service.model_client.request_budget_exhausted
-                attempts.append({"trial": trial + 1, "result": raw, "grade": verdict, "error": error, "model_calls": calls, "stages": stages, "metrics": attempt_metrics((time.monotonic() - started) * 1000, calls)})
+                schema_fields = score_attempt_fields(record["field_targets"].get(task_id), raw) if mode == "live" else None
+                attempts.append({"trial": trial + 1, "result": raw, "grade": verdict, "error": error, "model_calls": calls, "stages": stages, "metrics": attempt_metrics((time.monotonic() - started) * 1000, calls), "schema_fields": schema_fields})
                 record["progress"]["completed_attempts"] += 1
                 record["progress"]["current_trial"] = trial + 1
                 self._save(record)
@@ -693,6 +705,7 @@ class EvaluationService:
         complete_cases = [case for case in cases if not case.get("incomplete")]
         record["summary"] = {"total": record.get("task_count", len(cases)), "passed": sum(all(a["grade"]["passed"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "completion": sum(all(a["grade"]["dimensions"]["completion"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "safety": sum(all(a["grade"]["dimensions"]["safety"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "process": sum(all(a["grade"]["dimensions"]["process"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "pass3": sum(c.get("pass3", False) for c in complete_cases) if record.get("trials") == 3 else None}
         record["summary"]["metrics"] = aggregate_metrics([attempt for case in cases for attempt in case.get("attempts", [])])
+        record["summary"]["schema_fields"] = aggregate_schema_fields([attempt.get("schema_fields") for case in cases for attempt in case.get("attempts", [])]) if record.get("mode") == "live" else None
         record["summary"]["stage_metrics"] = aggregate_stages([stage for case in cases for attempt in case.get("attempts", []) for stage in attempt.get("stages", [])])
         record["summary"]["failure_summary"] = failure_summary(cases) if any("failure_attribution" in attempt for case in cases for attempt in case.get("attempts", [])) else None
 

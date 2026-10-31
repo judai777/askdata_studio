@@ -1,6 +1,8 @@
 import unittest
 
-from app.eval_schema_metrics import aggregate_schema_fields, score_schema_fields
+from pathlib import Path
+
+from app.eval_schema_metrics import aggregate_schema_fields, load_field_targets, score_attempt_fields, score_schema_fields
 
 
 class SchemaMetricTests(unittest.TestCase):
@@ -27,6 +29,19 @@ class SchemaMetricTests(unittest.TestCase):
             score_schema_fields(["orders.customer_id"], [])
         with self.assertRaisesRegex(ValueError, "数据库、表和字段名"):
             score_schema_fields(["ecommerce_ops.orders.customer_id"], [{"table_id": "orders", "field_name": "customer_id"}])
+
+    def test_live_result_evidence_and_version_guard(self) -> None:
+        target = ["askdata_mock.orders_current.region"]
+        self.assertIsNone(score_attempt_fields(target, {}))
+        self.assertIsNone(score_attempt_fields(target, {"retrieval": {}}))
+        self.assertEqual(score_attempt_fields(target, {"retrieval": {"hits": []}})["recall"], 0.0)
+        resumed = {"resumed": {"retrieval": {"hits": [{"database_id": "askdata_mock", "table_id": "orders_current", "field_name": "region"}]}}}
+        self.assertEqual(score_attempt_fields(target, resumed)["recall"], 1.0)
+        path = Path(__file__).parents[1] / "evals" / "field_targets.json"
+        labels, fingerprint = load_field_targets(path, "5.2")
+        self.assertEqual(len(labels), 12)
+        self.assertEqual(len(fingerprint), 16)
+        self.assertEqual(load_field_targets(path, "different")[0], {})
 
 
 if __name__ == "__main__":

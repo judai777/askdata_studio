@@ -48,12 +48,15 @@ class EvaluationTest(unittest.TestCase):
         contaminated["provenance"] = {"kind": "live", "config": {"llm_model": "test-model", "api_key": "secret-key", "llm_base_url": "secret-url"}}
         contaminated["cases"][0]["result"] = {"sql": "secret-sql", "rows": [{"password": "secret-row"}]}
         contaminated["cases"][0]["attempts"][0]["error"] = "secret-error"
+        contaminated["cases"][0]["attempts"][0]["schema_fields"] = {"target_count": 2, "retrieved_count": 1, "matched_count": 1, "recall": 0.5, "precision": 1.0, "missing": ["secret-field"]}
+        contaminated["summary"]["schema_fields"] = {"labeled_tasks": 1, "unlabeled_tasks": 0, "macro_recall": 0.5, "macro_precision": 1.0}
         contaminated["cases"][0]["metrics"]["elapsed_ms"] = "secret-metric"
         contaminated["cases"][0]["attempts"][0]["stages"] = [{"stage": "preprocess", "elapsed_ms": 2.5, "success": False, "failure_type": "secret-failure"}]
         exported = export_report(contaminated)
         serialized = json.dumps(exported)
-        for secret in ("secret-top-level", "secret-key", "secret-url", "secret-sql", "secret-row", "secret-error", "secret-failure", "secret-metric"):
+        for secret in ("secret-top-level", "secret-key", "secret-url", "secret-sql", "secret-row", "secret-error", "secret-failure", "secret-metric", "secret-field"):
             self.assertNotIn(secret, serialized)
+        self.assertEqual(exported["summary"]["schema_fields"]["macro_recall"], 0.5)
         self.assertEqual(exported["cases"][0]["attempts"][0]["stage_metrics"][0]["elapsed_ms"], 2.5)
         with self.assertRaisesRegex(ValueError, "只能导出"):
             export_report({**run, "status": "running"})
@@ -116,7 +119,7 @@ class EvaluationTest(unittest.TestCase):
         verdict = {"passed": False, "checks": {"execution": False}, "dimensions": {"completion": False, "safety": True, "process": False}}
         def execute(*_args, **_kwargs):
             fake.workflow.stage_telemetry.append({"stage": "preprocess", "elapsed_ms": 8.5, "success": False, "failure_type": "model_unavailable_fallback"})
-            return {"status": "completed"}
+            return {"status": "completed", "retrieval": {"hits": [{"database_id": "askdata_mock", "table_id": "orders_current", "field_name": "region"}]}}
         with patch("app.evaluation.AskDataService", return_value=fake), patch.object(service, "_execute_case", side_effect=execute), patch("app.evaluation.grade", return_value=verdict):
             run = service.run("live", ["mock.region_sales"])
         self.assertTrue(fake.workflow.stage_telemetry_enabled)
@@ -125,6 +128,9 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(run["summary"]["stage_metrics"][0]["calls"], 1)
         self.assertEqual(run["cases"][0]["failure_attribution"]["stage"], "preprocess")
         self.assertEqual(run["summary"]["failure_summary"], [{"kind": "stage", "stage": "preprocess", "count": 1}])
+        self.assertEqual(run["cases"][0]["attempts"][0]["schema_fields"]["matched_count"], 1)
+        self.assertAlmostEqual(run["summary"]["schema_fields"]["macro_recall"], 1 / 3)
+        self.assertEqual(service.export(run["id"])["summary"]["schema_fields"]["labeled_tasks"], 1)
         self.assertEqual(service.get_run(run["id"], replay=True)["summary"]["stage_metrics"][0]["elapsed_ms"], 8.5)
 
     def test_remote_request_budget_stops_remaining_tasks_and_keeps_report(self) -> None:

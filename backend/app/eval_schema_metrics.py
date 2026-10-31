@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from typing import Any
+import hashlib
+import json
+from pathlib import Path
 
 
 def _field_key(database: str, table: str, field: str) -> str:
@@ -46,3 +49,18 @@ def aggregate_schema_fields(scores: list[dict[str, Any] | None]) -> dict[str, An
         "macro_recall": sum(score["recall"] for score in valid) / len(valid) if valid else None,
         "macro_precision": sum(score["precision"] for score in valid) / len(valid) if valid else None,
     }
+
+
+def load_field_targets(path: Path, task_version: str) -> tuple[dict[str, list[str]], str]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("status") != "approved" or payload.get("task_version") != task_version:
+        return {}, hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    return payload["targets"], hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def score_attempt_fields(target_fields: list[str] | None, result: dict[str, Any]) -> dict[str, Any] | None:
+    final = result.get("resumed") if "resumed" in result else result
+    retrieval = final.get("retrieval") if isinstance(final, dict) else None
+    if target_fields is None or not isinstance(retrieval, dict) or not isinstance(retrieval.get("hits"), list):
+        return None
+    return score_schema_fields(target_fields, retrieval["hits"])

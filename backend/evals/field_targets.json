@@ -1,0 +1,84 @@
+{
+  "version": "1.0",
+  "status": "approved",
+  "task_version": "5.2",
+  "targets": {
+    "mock.region_sales": [
+      "askdata_mock.orders_current.region",
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status"
+    ],
+    "mock.customer_level": [
+      "askdata_mock.orders_current.customer_id",
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.customers.customer_id",
+      "askdata_mock.customers.customer_level"
+    ],
+    "mock.target_comparison": [
+      "askdata_mock.orders_current.region",
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.orders_current.order_date",
+      "askdata_mock.sales_targets.region",
+      "askdata_mock.sales_targets.target_amount",
+      "askdata_mock.sales_targets.target_month"
+    ],
+    "mock.date_range": [
+      "askdata_mock.orders_current.region",
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.orders_current.order_date"
+    ],
+    "mock.clarify_orders": [
+      "askdata_mock.orders_current.region",
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status"
+    ],
+    "metric.paid_vs_list": [
+      "askdata_mock.orders_current.region",
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.orders_current.order_date"
+    ],
+    "metric.list_amount": [
+      "askdata_mock.orders_current.region",
+      "askdata_mock.orders_current.order_amount",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.orders_current.order_date"
+    ],
+    "time.single_day": [
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.orders_current.order_date"
+    ],
+    "time.history_july": [
+      "askdata_mock.orders_history.paid_amount",
+      "askdata_mock.orders_history.status",
+      "askdata_mock.orders_history.order_date"
+    ],
+    "join.customer_orders": [
+      "askdata_mock.orders_current.customer_id",
+      "askdata_mock.orders_current.order_id",
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.orders_current.order_date",
+      "askdata_mock.customers.customer_id",
+      "askdata_mock.customers.customer_level"
+    ],
+    "grain.unique_customers": [
+      "askdata_mock.orders_current.region",
+      "askdata_mock.orders_current.customer_id",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.orders_current.order_date"
+    ],
+    "time.july_august": [
+      "askdata_mock.orders_history.paid_amount",
+      "askdata_mock.orders_history.status",
+      "askdata_mock.orders_history.order_date",
+      "askdata_mock.orders_current.paid_amount",
+      "askdata_mock.orders_current.status",
+      "askdata_mock.orders_current.order_date"
+    ]
+  }
+}

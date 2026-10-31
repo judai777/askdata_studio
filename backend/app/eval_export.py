@@ -79,6 +79,7 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
             "trial": attempt.get("trial"),
             "grade": _grade(attempt.get("grade") or {}),
             "metrics": _metrics(attempt.get("metrics")),
+            "schema_fields": _pick(attempt.get("schema_fields"), ("target_count", "retrieved_count", "matched_count", "recall", "precision")),
             "stage_metrics": _stages(_aggregate_attempt_stages(attempt.get("stages"))),
             **({"failure_attribution": _attribution(attempt.get("failure_attribution"))} if "failure_attribution" in attempt else {}),
         } for attempt in case.get("attempts", [])]
@@ -103,6 +104,7 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
         "request_budget": _pick(record.get("request_budget"), ("limit", "used", "exhausted")),
         "summary": {**(_pick(summary, ("total", "passed", "completion", "safety", "process", "pass3")) or {}),
                     "metrics": _metrics(summary.get("metrics")),
+                    "schema_fields": _pick(summary.get("schema_fields"), ("labeled_tasks", "unlabeled_tasks", "macro_recall", "macro_precision")),
                     "stage_metrics": _stages(summary.get("stage_metrics")),
                     **({"failure_summary": [{"kind": item["kind"], "stage": item.get("stage") if item.get("stage") in STAGE_NAMES else None, "count": item["count"]} for item in (summary.get("failure_summary") or []) if item.get("kind") in {"stage", "grader", "runner"} and type(item.get("count")) is int]} if "failure_summary" in summary else {})},
         "cases": cases,

@@ -15,9 +15,12 @@ class FieldTargetDraftTests(unittest.TestCase):
     def test_drafts_cover_sql_tasks_and_reference_real_fields(self) -> None:
         path = Path(__file__).parents[1] / "evals" / "field_targets_draft.json"
         draft = json.loads(path.read_text(encoding="utf-8"))
+        approved = json.loads((path.parent / "field_targets.json").read_text(encoding="utf-8"))
         catalog = json.loads(TASK_FILE.read_text(encoding="utf-8"))
         oracles = json.loads(ORACLE_FILE.read_text(encoding="utf-8"))
         self.assertEqual((draft["status"], draft["task_version"]), ("draft", catalog["version"]))
+        self.assertEqual((approved["status"], approved["task_version"]), ("approved", catalog["version"]))
+        self.assertEqual(approved["targets"], draft["targets"])
         expected_ids = {task["id"] for task in catalog["tasks"] if task.get("route") == "database_query" and task.get("kind") != "security_probe"}
         self.assertEqual(set(draft["targets"]), expected_ids)
         for task_id, labels in draft["targets"].items():
