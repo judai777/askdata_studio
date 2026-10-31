@@ -43,7 +43,7 @@ class OfflineGateTest(unittest.TestCase):
     def test_gate_detects_invalid_and_surviving_sql_with_case_id(self) -> None:
         changed = deepcopy(self.report)
         changed["counts"]["base"]["invalid"] = 1
-        changed["cases"][0]["fixtures"]["edge_v2"]["status"] = "survived"
+        changed["cases"][0]["fixtures"][self.baseline["required_kill_fixture"]]["status"] = "survived"
         errors = check_offline_gate(changed, self.baseline)
         self.assertTrue(any("无效 SQL" in item for item in errors))
         self.assertTrue(any("mutant-0" in item for item in errors))

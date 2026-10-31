@@ -63,7 +63,7 @@ def main() -> int:
         print("请核对题目、oracle、fixture 与错误 SQL 的变化，再审查并更新 evals/offline_gate.json。")
         return 1
     fixture_id = baseline["required_kill_fixture"]
-    print(f"离线门槛通过：任务 v{report['task_version']}；{len(report['cases'])} 条错误 SQL 在 {fixture_id} 全部识别，三套 fixture 无无效 SQL。")
+    print(f"离线门槛通过：任务 v{report['task_version']}；{len(report['cases'])} 条错误 SQL 在 {fixture_id} 全部识别，全部 {len(report['fixture_hashes'])} 套 fixture 无无效 SQL。")
     print("该结果只覆盖已登记的错误样例，不代表模型准确率。")
     return 0
 

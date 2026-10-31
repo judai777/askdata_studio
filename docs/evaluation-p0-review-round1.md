@@ -1,6 +1,6 @@
 # P0 首轮题目审核材料
 
-生成时间：2026-10-31。任务集 v5.1；参见[第一轮决策](evaluation-v22-decisions.md)与[扩展预审决策](evaluation-v23-decisions.md)。以下结果由现有标准 SQL 在 `base`、`edge_v1`、`edge_v2` 上执行得到，供管理员逐题核验。**所有题目仍为待审核，本文不代表人工通过。**
+生成时间：2026-10-31。此文保留任务集 v5.1 的**历史预审快照**；v5.2 及 `edge_v3` 的新证据见[第二十七阶段验收](evaluation-v27-validation.md)。参见[第一轮决策](evaluation-v22-decisions.md)与[扩展预审决策](evaluation-v23-decisions.md)。以下结果由当时标准 SQL 在 `base`、`edge_v1`、`edge_v2` 上执行得到，不代表人工通过。
 
 ## 1. 客户等级订单数与实付销售额
 

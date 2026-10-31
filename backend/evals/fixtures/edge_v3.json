@@ -1,0 +1,12 @@
+{
+  "description": "继承 edge_v2，追加一名测试客户及其 8 月外已支付订单，用于识别漏 2026 年 8 月过滤的错误。",
+  "extends": "edge_v2",
+  "append_rows": {
+    "customers": [
+      {"customer_id": 99011, "customer_name": "跨月测试客户", "customer_level": "战略客户", "region": "华东"}
+    ],
+    "orders_current": [
+      {"order_id": 99010, "region": "华东", "category": "企业服务", "order_amount": 150, "paid_amount": 123, "status": "已支付", "order_date": "2026-09-01", "customer_id": 99011, "product_id": 101}
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 {
-  "version": "1.3",
+  "version": "1.4",
   "mutants": [
     {
       "id": "region.omit_paid_status",
@@ -24,13 +24,13 @@
       "id": "target.omit_paid_status",
       "task_id": "mock.target_comparison",
       "fault": "目标对比时漏掉已支付状态过滤",
-      "sql": "SELECT o.region, ROUND(SUM(o.paid_amount), 2) AS sales, MAX(t.target_amount) AS target FROM orders_current o JOIN sales_targets t ON o.region = t.region WHERE t.target_month = '2026-08' GROUP BY o.region"
+      "sql": "SELECT o.region, ROUND(SUM(o.paid_amount), 2) AS sales, MAX(t.target_amount) AS target FROM orders_current o JOIN sales_targets t ON o.region = t.region WHERE o.order_date >= DATE '2026-08-01' AND o.order_date < DATE '2026-09-01' AND t.target_month = '2026-08' GROUP BY o.region"
     },
     {
       "id": "target.omit_month",
       "task_id": "mock.target_comparison",
       "fault": "关联销售目标时漏掉目标月份过滤",
-      "sql": "SELECT o.region, ROUND(SUM(o.paid_amount), 2) AS sales, MAX(t.target_amount) AS target FROM orders_current o JOIN sales_targets t ON o.region = t.region WHERE o.status = '已支付' GROUP BY o.region"
+      "sql": "SELECT o.region, ROUND(SUM(o.paid_amount), 2) AS sales, MAX(t.target_amount) AS target FROM orders_current o JOIN sales_targets t ON o.region = t.region WHERE o.status = '已支付' AND o.order_date >= DATE '2026-08-01' AND o.order_date < DATE '2026-09-01' GROUP BY o.region"
     },
     {
       "id": "date.exclude_aug15",
@@ -85,6 +85,48 @@
       "task_id": "time.july_august",
       "fault": "7 月历史月份误从当前订单表读取",
       "sql": "SELECT '2026-07' AS month, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-07-01' AND order_date < DATE '2026-08-01' UNION ALL SELECT '2026-08' AS month, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-08-01' AND order_date < DATE '2026-09-01'"
+    },
+    {
+      "id": "customer_orders.omit_august_month",
+      "task_id": "join.customer_orders",
+      "fault": "客户等级订单统计漏掉 8 月订单日期过滤",
+      "sql": "SELECT c.customer_level, COUNT(DISTINCT o.order_id) AS order_count, ROUND(SUM(o.paid_amount), 2) AS sales FROM orders_current o JOIN customers c ON o.customer_id = c.customer_id WHERE o.status = '已支付' GROUP BY c.customer_level",
+      "suggestion": "edge_v3 追加 2026-09-01 已支付订单，用于识别漏 8 月日期过滤。"
+    },
+    {
+      "id": "unique_customers.omit_august_month",
+      "task_id": "grain.unique_customers",
+      "fault": "地区去重客户数漏掉 8 月订单日期过滤",
+      "sql": "SELECT region, COUNT(DISTINCT customer_id) AS customer_count FROM orders_current WHERE status = '已支付' GROUP BY region",
+      "suggestion": "edge_v3 追加 2026-09-01 已支付订单，用于识别漏 8 月日期过滤。"
+    },
+    {
+      "id": "paid.omit_august_month",
+      "task_id": "metric.paid_vs_list",
+      "fault": "实付销售额漏掉 8 月订单日期过滤",
+      "sql": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' GROUP BY region",
+      "suggestion": "edge_v3 追加 2026-09-01 已支付订单，用于识别漏 8 月日期过滤。"
+    },
+    {
+      "id": "list.omit_august_month",
+      "task_id": "metric.list_amount",
+      "fault": "订单原价总额漏掉 8 月订单日期过滤",
+      "sql": "SELECT region, ROUND(SUM(order_amount), 2) AS original_amount FROM orders_current WHERE status = '已支付' GROUP BY region",
+      "suggestion": "edge_v3 追加 2026-09-01 已支付订单，用于识别漏 8 月日期过滤。"
+    },
+    {
+      "id": "target.omit_order_month",
+      "task_id": "mock.target_comparison",
+      "fault": "目标对比漏掉订单侧 8 月日期过滤",
+      "sql": "SELECT o.region, ROUND(SUM(o.paid_amount), 2) AS sales, MAX(t.target_amount) AS target FROM orders_current o JOIN sales_targets t ON o.region = t.region WHERE o.status = '已支付' AND t.target_month = '2026-08' GROUP BY o.region",
+      "suggestion": "edge_v3 追加 2026-09-01 已支付订单，用于识别漏 8 月日期过滤。"
+    },
+    {
+      "id": "july_august.omit_august_month",
+      "task_id": "time.july_august",
+      "fault": "跨月汇总的 8 月当前订单分支漏掉日期过滤",
+      "sql": "SELECT '2026-07' AS month, ROUND(SUM(paid_amount), 2) AS sales FROM orders_history WHERE status = '已支付' AND order_date >= DATE '2026-07-01' AND order_date < DATE '2026-08-01' UNION ALL SELECT '2026-08' AS month, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付'",
+      "suggestion": "edge_v3 追加 2026-09-01 已支付订单，用于识别漏 8 月日期过滤。"
     }
   ]
 }

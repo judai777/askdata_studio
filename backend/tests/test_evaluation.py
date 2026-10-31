@@ -204,11 +204,12 @@ class EvaluationTest(unittest.TestCase):
     def test_new_development_tasks_run_on_all_fixtures(self) -> None:
         service = EvaluationService()
         ids = ["join.customer_orders", "grain.unique_customers", "time.july_august"]
-        for fixture_id in ("base", "edge_v1", "edge_v2"):
-            run = service.run("demo", ids, fixture_id=fixture_id)
-            self.assertEqual(run["summary"]["passed"], 3)
-            self.assertEqual(run["review"], {"total": 3, "approved": 0, "rejected": 0, "pending": 3, "stale": 0})
-            self.assertEqual(service.get_run(run["id"], replay=True)["summary"], run["summary"])
+        with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.REVIEW_RECORD_FILE", Path(directory) / "reviews.json"):
+            for fixture_id in ("base", "edge_v1", "edge_v2", "edge_v3"):
+                run = service.run("demo", ids, fixture_id=fixture_id)
+                self.assertEqual(run["summary"]["passed"], 3)
+                self.assertEqual(run["review"], {"total": 3, "approved": 0, "rejected": 0, "pending": 3, "stale": 0})
+                self.assertEqual(service.get_run(run["id"], replay=True)["summary"], run["summary"])
 
     def test_review_state_is_manual_persistent_and_invalidated_by_changes(self) -> None:
         service = EvaluationService()
@@ -221,7 +222,7 @@ class EvaluationTest(unittest.TestCase):
                 self.assertEqual(initial["counts"]["pending"], 14)
                 preview = service.review_preview(task_id)
                 self.assertTrue(preview["oracle_sql"])
-                self.assertEqual(set(preview["expected_rows"]), {"base", "edge_v1", "edge_v2"})
+                self.assertEqual(set(preview["expected_rows"]), {"base", "edge_v1", "edge_v2", "edge_v3"})
                 fingerprint = preview["fingerprint"]
                 submitted = service.submit_review(task_id, "approved", "确认使用去重客户数，三套数据结果正确", fingerprint, "demo_admin")
                 self.assertEqual(submitted["status"], "approved")
@@ -242,6 +243,7 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(_fixture_hash("base"), "360b511959d6a4c4")
         self.assertEqual(_fixture_hash("edge_v1"), "06d46c2bf6760fde")
         self.assertNotEqual(_fixture_hash("edge_v2"), _fixture_hash("edge_v1"))
+        self.assertNotEqual(_fixture_hash("edge_v3"), _fixture_hash("edge_v2"))
         task = next(t for t in task_catalog()["tasks"] if t["id"] == "time.single_day")
         base_rows = service._oracle(task)
         with fixture_engine("edge_v1") as engine:
@@ -266,10 +268,11 @@ class EvaluationTest(unittest.TestCase):
 
     def test_mutant_audit_shows_fixture_gain(self) -> None:
         report = EvaluationService().audit()
-        self.assertEqual(report["counts"]["base"], {"killed": 10, "survived": 4, "invalid": 0})
-        self.assertEqual(report["counts"]["edge_v1"], {"killed": 13, "survived": 1, "invalid": 0})
-        self.assertEqual(report["counts"]["edge_v2"], {"killed": 14, "survived": 0, "invalid": 0})
-        self.assertEqual(report["counts"]["overall"], {"killed": 14, "survived": 0, "invalid": 0})
+        self.assertEqual(report["counts"]["base"], {"killed": 10, "survived": 10, "invalid": 0})
+        self.assertEqual(report["counts"]["edge_v1"], {"killed": 13, "survived": 7, "invalid": 0})
+        self.assertEqual(report["counts"]["edge_v2"], {"killed": 14, "survived": 6, "invalid": 0})
+        self.assertEqual(report["counts"]["edge_v3"], {"killed": 20, "survived": 0, "invalid": 0})
+        self.assertEqual(report["counts"]["overall"], {"killed": 20, "survived": 0, "invalid": 0})
         improved = [case for case in report["cases"] if case["fixtures"]["base"]["status"] == "survived" and case["fixtures"]["edge_v1"]["status"] == "killed"]
         self.assertGreaterEqual(len(improved), 2)
         blind_spot = next(case for case in report["cases"] if case["id"] == "region.distinct_amount")
@@ -278,6 +281,11 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(blind_spot["fixtures"]["edge_v1"]["status"], "survived")
         self.assertEqual(blind_spot["fixtures"]["edge_v2"]["status"], "killed")
         self.assertIn("edge_v2", blind_spot["suggestion"])
+        month_cases = [case for case in report["cases"] if case["id"].endswith("omit_august_month") or case["id"] == "target.omit_order_month"]
+        self.assertEqual(len(month_cases), 6)
+        for case in month_cases:
+            self.assertTrue(all(case["fixtures"][fixture]["status"] == "survived" for fixture in ("base", "edge_v1", "edge_v2")))
+            self.assertEqual(case["fixtures"]["edge_v3"]["status"], "killed")
         self.assertTrue(all(outcome["status"] != "invalid" for case in report["cases"] for outcome in case["fixtures"].values()))
         self.assertTrue(report["mutant_hash"])
 
@@ -323,6 +331,7 @@ class EvaluationTest(unittest.TestCase):
             self.assertEqual(audit.status_code, 200, audit.text)
             self.assertEqual(audit.json()["counts"]["edge_v1"]["killed"], 13)
             self.assertEqual(audit.json()["counts"]["edge_v2"]["killed"], 14)
+            self.assertEqual(audit.json()["counts"]["edge_v3"]["killed"], 20)
             edge = client.post("/api/eval/runs", headers=headers, json={"mode": "demo", "task_ids": ["mock.region_sales"], "fixture_id": "edge_v1"})
             self.assertEqual(edge.status_code, 200, edge.text)
             self.assertEqual(edge.json()["fixture_id"], "edge_v1")

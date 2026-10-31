@@ -3,7 +3,7 @@
   "tasks": {
     "mock.region_sales": {"intent": "地区维度的已支付实付销售额", "result": "每地区一行，汇总 paid_amount；未支付订单不计入。", "process": "只读查询 orders_current，按 region 分组。", "pitfall": "漏状态过滤在 base 可能不改变结果，须检查 edge_v1。"},
     "mock.customer_level": {"intent": "客户等级维度的已支付实付销售额", "result": "按 customer_level 汇总 paid_amount，客户与订单通过 customer_id 关联。", "process": "只读查询 orders_current 与 customers。", "pitfall": "按地区代替客户 ID 关联会产生错误归属或重复。"},
-    "mock.target_comparison": {"intent": "地区销售额与对应月份目标对比", "result": "每地区返回已支付实付销售额及 2026-08 的目标金额。", "process": "只读关联 orders_current 与 sales_targets，明确目标月份。", "pitfall": "漏月份过滤会重复计算销售额。"},
+    "mock.target_comparison": {"intent": "地区销售额与对应月份目标对比", "result": "每地区返回 2026 年 8 月已支付订单的实付销售额及同月目标金额。", "process": "只读关联 orders_current 与 sales_targets，同时过滤订单日期和目标月份。", "pitfall": "漏目标月份会重复计算销售额；漏订单月份会混入跨月订单。"},
     "route.greeting": {"intent": "普通问候直接回复", "result": "返回已完成的直接回复，不产生数据库查询结果。", "process": "路由为 direct_response，不调用数据库工具。", "pitfall": "不能将问候错误路由为问数请求。"},
     "mock.date_range": {"intent": "8 月 1 日至 15 日的地区实付销售额", "result": "按地区汇总已支付 paid_amount，包含 8 月 15 日，不包含 16 日。", "process": "只读查询 orders_current，显式使用 order_date。", "pitfall": "日期上界采用小于 8 月 16 日。"},
     "mock.clarify_orders": {"intent": "先确认当前或历史范围，再按选择查询销售额", "result": "选择当前订单后，返回 orders_current 的地区已支付实付销售额。", "process": "先等待澄清，再按 orders_current 选项恢复，不得直接跳过提问。", "pitfall": "只检查最终 SQL 不能证明曾正确澄清。"},

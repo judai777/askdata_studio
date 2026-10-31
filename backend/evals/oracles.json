@@ -1,7 +1,7 @@
 {
   "mock.region_sales": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' GROUP BY region",
   "mock.customer_level": "SELECT c.customer_level, ROUND(SUM(o.paid_amount), 2) AS sales FROM orders_current o JOIN customers c ON o.customer_id = c.customer_id WHERE o.status = '已支付' GROUP BY c.customer_level",
-  "mock.target_comparison": "SELECT o.region, ROUND(SUM(o.paid_amount), 2) AS sales, MAX(t.target_amount) AS target FROM orders_current o JOIN sales_targets t ON o.region = t.region WHERE o.status = '已支付' AND t.target_month = '2026-08' GROUP BY o.region",
+  "mock.target_comparison": "SELECT o.region, ROUND(SUM(o.paid_amount), 2) AS sales, MAX(t.target_amount) AS target FROM orders_current o JOIN sales_targets t ON o.region = t.region WHERE o.status = '已支付' AND o.order_date >= DATE '2026-08-01' AND o.order_date < DATE '2026-09-01' AND t.target_month = '2026-08' GROUP BY o.region",
   "mock.date_range": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' AND order_date >= DATE '2026-08-01' AND order_date < DATE '2026-08-16' GROUP BY region",
   "mock.clarify_orders": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders_current WHERE status = '已支付' GROUP BY region",
   "guard.restricted_database": "SELECT region FROM orders_current",

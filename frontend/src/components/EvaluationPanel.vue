@@ -17,7 +17,7 @@ const requestLimit = ref<20 | 50 | 100>(50)
 const modelCatalog = ref<EvalModelCatalog | null>(null)
 const selectedModel = ref("")
 const fixtureId = ref<EvalFixtureId>("base")
-const auditFixtures: { id: EvalFixtureId; label: string }[] = [{ id: "base", label: "原始" }, { id: "edge_v1", label: "边界 v1" }, { id: "edge_v2", label: "边界 v2" }]
+const auditFixtures: { id: EvalFixtureId; label: string }[] = [{ id: "base", label: "原始" }, { id: "edge_v1", label: "边界 v1" }, { id: "edge_v2", label: "边界 v2" }, { id: "edge_v3", label: "边界 v3" }]
 const calibrationDimensions = [{ key: "completion", label: "完成度" }, { key: "safety", label: "安全" }, { key: "process", label: "过程" }] as const
 const expanded = ref("")
 const baselineId = ref("")
@@ -307,7 +307,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <label v-if="mode === 'live'" class="eval-option">Chat 模型 <select v-model="selectedModel"><option v-for="model in modelCatalog?.models || []" :key="model" :value="model">{{ model }}{{ model === modelCatalog?.default ? '（默认）' : '' }}</option></select></label>
         <label class="eval-option">独立试验 <select v-model.number="trials"><option :value="1">1 次</option><option :value="3">3 次（Pass³）</option></select></label>
         <label v-if="mode === 'live'" class="eval-option">远程请求上限 <select v-model.number="requestLimit"><option :value="20">20 次</option><option :value="50">50 次</option><option :value="100">100 次</option></select></label>
-        <label class="eval-option">数据集 <select v-model="fixtureId"><option value="base">原始数据</option><option value="edge_v1">边界数据 v1</option><option value="edge_v2">边界数据 v2</option></select></label>
+        <label class="eval-option">数据集 <select v-model="fixtureId"><option value="base">原始数据</option><option value="edge_v1">边界数据 v1</option><option value="edge_v2">边界数据 v2</option><option value="edge_v3">边界数据 v3</option></select></label>
         <p v-if="fixtureId !== 'base'" class="eval-notice">边界数据在临时目录加入折扣、非已支付和日期端点记录；v2 再加入不同订单的同额实付记录。原始 CSV 不会改变。</p>
         <p v-if="mode === 'demo'" class="eval-notice">演示结果由固定 oracle 生成，用于体验流程，不代表模型准确率。</p>
         <p v-else class="eval-notice">模型列表由服务端登记；Embedding、Rerank 和其他配置沿用当前服务。顺序执行，可能产生 API 费用。请求上限包含重试，不是费用上限；权限护栏题不调用模型。{{ modelCatalog?.api_key_configured ? '' : '尚未配置远程密钥。' }}</p>

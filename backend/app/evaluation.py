@@ -40,7 +40,13 @@ REVIEW_SPEC_FILE = BASE_DIR / "evals" / "review_specs.json"
 REVIEW_RECORD_FILE = BASE_DIR / "data" / "eval_reviews.json"
 EDGE_FILE = BASE_DIR / "evals" / "fixtures" / "edge_v1.json"
 EDGE_V2_FILE = BASE_DIR / "evals" / "fixtures" / "edge_v2.json"
-FIXTURE_FILES = {"base": (), "edge_v1": (EDGE_FILE,), "edge_v2": (EDGE_FILE, EDGE_V2_FILE)}
+EDGE_V3_FILE = BASE_DIR / "evals" / "fixtures" / "edge_v3.json"
+FIXTURE_FILES = {
+    "base": (),
+    "edge_v1": (EDGE_FILE,),
+    "edge_v2": (EDGE_FILE, EDGE_V2_FILE),
+    "edge_v3": (EDGE_FILE, EDGE_V2_FILE, EDGE_V3_FILE),
+}
 RUN_DIR = BASE_DIR / "data" / "eval_runs"
 
 
@@ -81,10 +87,10 @@ def fixture_engine(fixture_id: str):
         target.mkdir()
         for source in (DATABASE_ROOT / "askdata_mock").glob("*.csv"):
             shutil.copy2(source, target / source.name)
-        for overlay_file in FIXTURE_FILES[fixture_id]:
+        for index, overlay_file in enumerate(FIXTURE_FILES[fixture_id]):
             manifest = json.loads(overlay_file.read_text(encoding="utf-8"))
-            if overlay_file == EDGE_V2_FILE and manifest.get("extends") != "edge_v1":
-                raise ValueError("edge_v2 必须继承 edge_v1")
+            if index and manifest.get("extends") != FIXTURE_FILES[fixture_id][index - 1].stem:
+                raise ValueError(f"{overlay_file.stem} 必须继承 {FIXTURE_FILES[fixture_id][index - 1].stem}")
             for table, rows in manifest["append_rows"].items():
                 path = target / f"{table}.csv"
                 if not path.is_file():

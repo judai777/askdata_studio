@@ -1,9 +1,9 @@
 {
-  "version": "5.1",
+  "version": "5.2",
   "tasks": [
     {"id":"mock.region_sales","category":"单表聚合","query":"按地区统计已支付订单销售额","database":"askdata_mock","route":"database_query","required_tables":["orders_current"]},
     {"id":"mock.customer_level","category":"多表关联","query":"按客户等级统计已支付订单销售额","database":"askdata_mock","route":"database_query","required_tables":["orders_current","customers"]},
-    {"id":"mock.target_comparison","category":"多表关联","query":"对比2026年8月各地区已支付订单的实付销售额和当月销售目标","database":"askdata_mock","route":"database_query","required_tables":["orders_current","sales_targets"]},
+    {"id":"mock.target_comparison","category":"多表关联","query":"对比2026年8月各地区已支付订单的实付销售额和当月销售目标","database":"askdata_mock","route":"database_query","required_tables":["orders_current","sales_targets"],"required_time_fields":["order_date","target_month"]},
     {"id":"route.greeting","category":"路由","query":"你好","route":"direct_response"},
     {"id":"mock.date_range","category":"时间口径","query":"统计2026年8月1日至8月15日已支付订单的各地区销售额","database":"askdata_mock","route":"database_query","required_tables":["orders_current"],"required_time_fields":["order_date"]},
     {"id":"mock.clarify_orders","kind":"clarification","category":"澄清恢复","query":"查询当前或历史订单的销售额，先让我选择范围","database":"askdata_mock","route":"database_query","option_id":"orders_current","required_tables":["orders_current"]},

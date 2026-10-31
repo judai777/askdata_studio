@@ -112,7 +112,7 @@ export interface EvalReviewRecord { decision: "approved" | "rejected"; note: str
 export interface EvalReviewItem { task_id: string; query: string; category: string; spec: EvalReviewSpec; fingerprint: string; status: "approved" | "rejected" | "pending" | "stale"; latest: EvalReviewRecord | null }
 export interface EvalReviewCatalog { version: string; task_version: string; counts: { approved: number; rejected: number; pending: number; stale: number }; tasks: EvalReviewItem[] }
 export interface EvalReviewPreview extends EvalReviewItem { task: EvalTask; oracle_sql: string | null; expected_rows: Record<string, Record<string, unknown>[]>; history: EvalReviewRecord[] }
-export type EvalFixtureId = "base" | "edge_v1" | "edge_v2"
+export type EvalFixtureId = "base" | "edge_v1" | "edge_v2" | "edge_v3"
 export interface EvalProvenance { kind: "demo" | "live"; prompt_hash: string | null; workflow_hash: string | null; config: Record<string, string | number | boolean> | null }
 export interface EvalAudit { task_version: string; mutant_version: string; mutant_hash: string; oracle_hash: string; fixture_hashes: Record<string, string>; counts: Record<string, { killed: number; survived: number; invalid: number }>; cases: { id: string; task_id: string; fault: string; sql: string; suggestion?: string | null; status: "killed" | "survived" | "invalid"; fixtures: Record<string, { status: "killed" | "survived" | "invalid"; error?: string }> }[] }
 export interface EvalMetrics { elapsed_ms: number; model_calls: number; failed_calls: number; usage_calls: number; successful_calls: number; total_tokens: number | null }
