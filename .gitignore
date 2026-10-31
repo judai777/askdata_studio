@@ -11,6 +11,7 @@ backend/data/
 backend/data/schema_index.json
 backend/data/eval_runs/
 backend/data/eval_reviews.json
+backend/data/eval_labels.json
 backend/.env
 frontend/node_modules/
 frontend/dist/

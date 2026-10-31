@@ -16,6 +16,9 @@ flowchart TB
     Review --> ReviewStore[本地审核记录与状态]
     ReviewStore --> UI
     ReviewStore --> Runner
+    Runs --> HumanLabels[管理员逐次轨迹标注]
+    HumanLabels --> Calibration[按判分器版本统计分歧]
+    Calibration --> UI
     Oracles[backend/evals/oracles.json] --> Oracle
     Mutants[backend/evals/mutants.json] --> Audit[错误 SQL 区分力审计]
     Oracles --> Audit
@@ -81,6 +84,8 @@ flowchart TB
 题目清单与标准 SQL 分开存放。`edge_v1` 根据原始 CSV 和版本化边界行清单重建临时数据；`edge_v2` 在 v1 之上再追加同地区、不同订单的同额实付记录。Agent 工具、权限探针和 oracle 在同一 fixture 上运行；原始数据不变，v1 指纹保持稳定。
 
 任务集 v5 含 14 道开发集题。每题有审核说明，管理员可预览标准 SQL 与三套 fixture 的预期结果，再提交通过或退回及意见。审核记录本地持久化；任务、单题 oracle、审核说明或 fixture 指纹改变时旧审核标为过期。评测记录保存当时所选题的审核覆盖度；尚未建立独立保留集。
+
+人工任务审核确认题目与标准答案是否可信；人工轨迹标签判断某次 Agent 输出是否正确、安全、合规及回答质量。标签与运行 ID、任务 ID、试验序号和轨迹指纹绑定，独立保存在 Git 忽略的 `backend/data/eval_labels.json`，不复制 SQL、结果行或模型正文。轨迹或评测依据变化后旧标签过期。统计只使用实时运行的最新有效标签，按原始判分器指纹列出完成度、安全、过程的 TP/FP/FN/TN；不确定判断不进入一致率分母。回答质量目前只展示人工分布，尚无自动 Judge。
 
 区分力审计将版本化错误 SQL 与 oracle 在 `base`、`edge_v1`、`edge_v2` 上分别执行。只有 SQL 成功执行且结果不同才算识别；执行失败单列为无效。管理员可在评测台触发审计，过程只用本地 DuckDB，不调用模型。
 
@@ -162,6 +167,19 @@ flowchart LR
 ```
 
 审核记录与自动判分分开：管理员确认题目依据，不改变某次 Agent 输出的通过与否。所有题初始为待审核，当前 14 题均属于开发集；独立保留集仍是后续工作。
+
+## 人工判分校准流程
+
+```mermaid
+flowchart LR
+    A[打开已结束运行的单次试验] --> B[核对轨迹与自动判分]
+    B --> C[人工标注完成、安全、过程、回答质量及依据]
+    C --> D[按轨迹指纹保存历史]
+    D --> E{实时且标签有效?}
+    E -->|否| F[仅保留练习或过期记录]
+    E -->|是| G[按判分器版本统计 TP FP FN TN]
+    G --> H[人工检查分歧并修订规则或任务]
+```
 
 ## 下一步最值得改进
 

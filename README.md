@@ -142,6 +142,8 @@ P2 失败归因已完成：失败试验给出主要排查位置，区分工作�
 
 受控 A/B 流程：先完成一次实时基线运行，在其报告中选择候选 Chat 模型并点击“以此为基线运行候选”。系统固定原选题、数据集、试验次数和远程请求上限；只有任务、标准答案、判分器、提示词、工作流与非 Chat 配置仍一致才允许创建。候选完成后页面会填入回归对比。旧运行缺少完整实验条件时需重新建立基线。详见[第二十阶段决策](docs/evaluation-v20-decisions.md)与[评测结构和流程图](docs/evaluation-architecture.md)。
 
+运行报告中的每次试验可由管理员标注完成度、安全、过程和回答质量，并写下判断依据。页面底部“人工标签与判分校准”只统计实时运行的有效标签，按判分器版本展示一致与分歧；离线演示标注仅用于练习。标签保存在本地 `backend/data/eval_labels.json`，不随 Git 提交。详见[第二十一阶段决策](docs/evaluation-v21-decisions.md)。
+
 离线回归门槛不需要本地模型或远程 API 密钥。在 `backend` 目录运行 `python seed_demo_data.py` 准备固定 CSV，运行 `python -m unittest discover -s tests -q`，再运行 `python -m app.eval_gate`。门槛核对任务、标准答案、错误 SQL 和三套 fixture 的版本/指纹，并要求 `edge_v2` 识别全部已登记错误 SQL、所有 fixture 无无效 SQL。题目或数据有意变更时，先核对审计结果，再显式更新 `backend/evals/offline_gate.json`；门槛不会自动更新基线。GitHub Actions 同步执行这些步骤和前端构建。详见[第十六阶段决策记录](docs/evaluation-v16-decisions.md)。
 
 运行记录保存在 `backend/data/eval_runs/`（被 Git 忽略）。从[首版工程阶段验收与两幅流程图](docs/evaluation-milestone-1.md)开始体验；详细结构见[评测结构与流程](docs/evaluation-architecture.md)，决策历程见[评测决策记录](docs/evaluation-decisions.md)。

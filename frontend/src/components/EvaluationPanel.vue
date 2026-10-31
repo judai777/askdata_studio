@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { api } from "../api"
-import type { EvalAudit, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunSummary, EvalTask } from "../api"
+import type { EvalAudit, EvalCalibration, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
 
 const tasks = ref<EvalTask[]>([])
 const selected = ref<string[]>([])
@@ -18,6 +18,7 @@ const modelCatalog = ref<EvalModelCatalog | null>(null)
 const selectedModel = ref("")
 const fixtureId = ref<EvalFixtureId>("base")
 const auditFixtures: { id: EvalFixtureId; label: string }[] = [{ id: "base", label: "原始" }, { id: "edge_v1", label: "边界 v1" }, { id: "edge_v2", label: "边界 v2" }]
+const calibrationDimensions = [{ key: "completion", label: "完成度" }, { key: "safety", label: "安全" }, { key: "process", label: "过程" }] as const
 const expanded = ref("")
 const baselineId = ref("")
 const candidateId = ref("")
@@ -31,6 +32,15 @@ const reviewPreview = ref<EvalReviewPreview | null>(null)
 const reviewNote = ref("")
 const reviewBusy = ref(false)
 const reviewError = ref("")
+const runLabels = ref<EvalRunLabels | null>(null)
+const labelTarget = ref("")
+const labelDraft = ref<EvalHumanDimensionLabels>({ completion: "unsure", safety: "unsure", process: "unsure", report_quality: "unsure" })
+const labelNote = ref("")
+const labelBusy = ref(false)
+const labelError = ref("")
+const calibration = ref<EvalCalibration | null>(null)
+const calibrationBusy = ref(false)
+const calibrationError = ref("")
 const auditCases = computed(() => [...(audit.value?.cases || [])].sort((a, b) => ({ survived: 0, invalid: 1, killed: 2 })[a.status] - ({ survived: 0, invalid: 1, killed: 2 })[b.status]))
 let timer: number | null = null
 let polling = false
@@ -46,6 +56,7 @@ async function pollRun() {
       if (timer !== null) window.clearInterval(timer)
       timer = null
       runs.value = await api.evalRuns()
+      runLabels.value = await api.evalLabels(current.value.id)
       if (current.value.status === "completed" && current.value.baseline_run_id) {
         baselineId.value = current.value.baseline_run_id
         candidateId.value = current.value.id
@@ -88,6 +99,8 @@ async function start() {
   try {
     const started = await api.evalStart(mode.value, selected.value, trials.value, fixtureId.value, mode.value === "live" ? requestLimit.value : undefined, mode.value === "live" ? selectedModel.value : undefined)
     current.value = await api.evalDetail(started.id)
+    runLabels.value = null
+    labelTarget.value = ""
     watchRun()
     runs.value = await api.evalRuns()
   } catch (caught) { error.value = String(caught) }
@@ -98,6 +111,9 @@ async function openRun(id: string) {
   try {
     current.value = await api.evalDetail(id)
     error.value = ""
+    runLabels.value = null
+    labelTarget.value = ""
+    runLabels.value = await api.evalLabels(id)
     if (current.value.mode === "live") mode.value = "live"
     if (current.value.baseline_run_id) {
       baselineId.value = current.value.baseline_run_id
@@ -122,6 +138,8 @@ async function startCandidate() {
     candidateId.value = started.id
     comparison.value = null
     current.value = await api.evalDetail(started.id)
+    runLabels.value = null
+    labelTarget.value = ""
     watchRun()
     runs.value = await api.evalRuns()
   } catch (caught) { error.value = String(caught) }
@@ -172,6 +190,43 @@ async function compareRuns() {
   catch (caught) { compareError.value = String(caught) }
 }
 
+function labelItem(taskId: string, trial: number) {
+  return runLabels.value?.items.find(item => item.task_id === taskId && item.trial === trial)
+}
+
+function beginLabel(taskId: string, trial: number) {
+  const item = labelItem(taskId, trial)
+  if (!item) return
+  labelTarget.value = `${taskId}:${trial}`
+  labelDraft.value = item.status === "valid" && item.latest ? { ...item.latest.labels } : { completion: "unsure", safety: "unsure", process: "unsure", report_quality: "unsure" }
+  labelNote.value = ""
+  labelError.value = ""
+}
+
+async function saveLabel(taskId: string, trial: number) {
+  const item = labelItem(taskId, trial)
+  if (!current.value || !item) return
+  if (!labelNote.value.trim()) { labelError.value = "请填写人工判断依据"; return }
+  labelBusy.value = true
+  labelError.value = ""
+  try {
+    await api.evalSubmitLabel(current.value.id, taskId, trial, item.fingerprint, labelDraft.value, labelNote.value)
+    runLabels.value = await api.evalLabels(current.value.id)
+    labelTarget.value = ""
+    labelNote.value = ""
+    if (calibration.value) calibration.value = await api.evalCalibration()
+  } catch (caught) { labelError.value = String(caught) }
+  finally { labelBusy.value = false }
+}
+
+async function refreshCalibration() {
+  calibrationBusy.value = true
+  calibrationError.value = ""
+  try { calibration.value = await api.evalCalibration() }
+  catch (caught) { calibrationError.value = String(caught) }
+  finally { calibrationBusy.value = false }
+}
+
 async function runAudit() {
   auditBusy.value = true
   auditError.value = ""
@@ -217,6 +272,9 @@ function auditLabel(status: string) {
 function comparisonLabel(state: string) {
   return ({ regressed: "退化", improved: "改善", still_passed: "保持通过", still_failed: "保持失败" } as Record<string, string>)[state] || state
 }
+
+function humanLabel(value?: string) { return ({ pass: "通过", fail: "未通过", unsure: "无法判断" } as Record<string, string>)[value || ""] || "未知" }
+function formatAgreement(value: number | null) { return value === null ? "未知" : `${(value * 100).toFixed(1)}%` }
 
 function formatDuration(value: number) { return `${(value / 1000).toFixed(2)} 秒` }
 function stageLabel(stage: string) {
@@ -292,7 +350,30 @@ function failureLabel(value: EvalFailureAttribution | null) {
               <p>判分：<span v-for="(ok, name) in item.grade.checks" :key="name" :class="ok ? 'pass' : 'fail'">{{ name }} {{ ok ? '✓' : '×' }}　</span></p>
               <p>SQL：<code>{{ item.result.sql || '无' }}</code></p>
               <details v-if="item.stage_metrics?.length" class="eval-provenance"><summary>本题阶段归因</summary><p v-for="stage in item.stage_metrics" :key="stage.stage" class="eval-meta">{{ stageLabel(stage.stage) }}：{{ stageDuration(stage.elapsed_ms) }} · {{ stage.calls }} 次 · 失败 {{ stage.failures }} 次</p></details>
-              <div v-for="attempt in item.attempts" :key="attempt.trial"><p>试验 {{ attempt.trial }}：<span :class="attempt.grade.passed ? 'pass' : 'fail'">{{ attempt.grade.passed ? '通过' : '失败' }}</span> {{ attempt.error || '' }} <small v-if="attempt.metrics">· {{ formatDuration(attempt.metrics.elapsed_ms) }} · 调用 {{ attempt.metrics.model_calls }} 次 · Token {{ attempt.metrics.total_tokens ?? '未知' }}</small></p><p v-if="attempt.failure_attribution" class="eval-notice">{{ failureLabel(attempt.failure_attribution) }}</p><details v-if="attempt.stages?.length" class="eval-provenance"><summary>阶段轨迹</summary><p v-for="(stage, index) in attempt.stages" :key="index" class="eval-meta"><span :class="stage.success ? 'pass' : 'fail'">{{ stage.success ? '✓' : '×' }}</span> {{ stageLabel(stage.stage) }}<span v-if="stage.tool"> · {{ stage.tool }}</span> · {{ stageDuration(stage.elapsed_ms) }}<span v-if="stage.failure_type"> · {{ stage.failure_type }}</span></p></details><details v-if="attempt.model_calls?.length"><summary>模型调用摘要</summary><p v-for="(call, index) in attempt.model_calls" :key="index" class="eval-meta">{{ call.kind }} · {{ call.stage ? stageLabel(call.stage) : '阶段未知' }} · {{ stageDuration(call.elapsed_ms) }} · {{ call.success ? '成功' : '失败' }} · Token {{ call.usage?.total_tokens ?? '未知' }}</p></details><details><summary>本次轨迹</summary><pre>{{ JSON.stringify(attempt.result, null, 2) }}</pre></details></div>
+              <div v-for="attempt in item.attempts" :key="attempt.trial">
+                <p>试验 {{ attempt.trial }}：<span :class="attempt.grade.passed ? 'pass' : 'fail'">{{ attempt.grade.passed ? '通过' : '失败' }}</span> {{ attempt.error || '' }} <small v-if="attempt.metrics">· {{ formatDuration(attempt.metrics.elapsed_ms) }} · 调用 {{ attempt.metrics.model_calls }} 次 · Token {{ attempt.metrics.total_tokens ?? '未知' }}</small></p>
+                <p class="eval-meta">自动判分：完成 {{ attempt.grade.dimensions.completion ? '通过' : '未通过' }} · 安全 {{ attempt.grade.dimensions.safety ? '通过' : '未通过' }} · 过程 {{ attempt.grade.dimensions.process ? '通过' : '未通过' }}</p>
+                <p v-if="attempt.failure_attribution" class="eval-notice">{{ failureLabel(attempt.failure_attribution) }}</p>
+                <details v-if="attempt.stages?.length" class="eval-provenance"><summary>阶段轨迹</summary><p v-for="(stage, index) in attempt.stages" :key="index" class="eval-meta"><span :class="stage.success ? 'pass' : 'fail'">{{ stage.success ? '✓' : '×' }}</span> {{ stageLabel(stage.stage) }}<span v-if="stage.tool"> · {{ stage.tool }}</span> · {{ stageDuration(stage.elapsed_ms) }}<span v-if="stage.failure_type"> · {{ stage.failure_type }}</span></p></details>
+                <details v-if="attempt.model_calls?.length"><summary>模型调用摘要</summary><p v-for="(call, index) in attempt.model_calls" :key="index" class="eval-meta">{{ call.kind }} · {{ call.stage ? stageLabel(call.stage) : '阶段未知' }} · {{ stageDuration(call.elapsed_ms) }} · {{ call.success ? '成功' : '失败' }} · Token {{ call.usage?.total_tokens ?? '未知' }}</p></details>
+                <details><summary>本次轨迹</summary><pre>{{ JSON.stringify(attempt.result, null, 2) }}</pre></details>
+                <div v-if="['completed', 'cancelled', 'budget_exhausted'].includes(current.status || '') && labelItem(item.task_id, attempt.trial)" class="eval-provenance">
+                  <p class="eval-meta">人工轨迹标签：{{ labelItem(item.task_id, attempt.trial)?.status === 'valid' ? '已标注' : labelItem(item.task_id, attempt.trial)?.status === 'stale' ? '已过期' : '未标注' }} <span v-if="current.mode === 'demo'">· 离线练习，不计入真实模型校准</span></p>
+                  <p v-if="labelItem(item.task_id, attempt.trial)?.status === 'valid'" class="eval-meta">完成 {{ humanLabel(labelItem(item.task_id, attempt.trial)?.latest?.labels.completion) }} · 安全 {{ humanLabel(labelItem(item.task_id, attempt.trial)?.latest?.labels.safety) }} · 过程 {{ humanLabel(labelItem(item.task_id, attempt.trial)?.latest?.labels.process) }} · 回答质量 {{ humanLabel(labelItem(item.task_id, attempt.trial)?.latest?.labels.report_quality) }}</p>
+                  <button class="eval-secondary" @click="beginLabel(item.task_id, attempt.trial)">{{ labelItem(item.task_id, attempt.trial)?.status === 'valid' ? '修改人工标签' : '人工标注试验' }}</button>
+                  <div v-if="labelTarget === `${item.task_id}:${attempt.trial}`" class="eval-review-detail">
+                    <p class="eval-meta">先核对本次轨迹。每个维度可选“无法判断”；回答质量只记录人工意见。</p>
+                    <label>完成度 <select v-model="labelDraft.completion"><option value="pass">通过</option><option value="fail">未通过</option><option value="unsure">无法判断</option></select></label>
+                    <label>安全 <select v-model="labelDraft.safety"><option value="pass">通过</option><option value="fail">未通过</option><option value="unsure">无法判断</option></select></label>
+                    <label>过程 <select v-model="labelDraft.process"><option value="pass">通过</option><option value="fail">未通过</option><option value="unsure">无法判断</option></select></label>
+                    <label>回答质量 <select v-model="labelDraft.report_quality"><option value="pass">通过</option><option value="fail">未通过</option><option value="unsure">无法判断</option></select></label>
+                    <label>判断依据 <textarea v-model="labelNote" rows="3" maxlength="1000" placeholder="写下与结果、SQL、过程或表达相关的核对依据"></textarea></label>
+                    <button class="eval-secondary" :disabled="labelBusy" @click="saveLabel(item.task_id, attempt.trial)">{{ labelBusy ? '保存中…' : '保存人工标签' }}</button>
+                    <p v-if="labelError" class="eval-error">{{ labelError }}</p>
+                  </div>
+                  <details v-if="labelItem(item.task_id, attempt.trial)?.history.length"><summary>查看人工标签历史</summary><p v-for="(entry, index) in labelItem(item.task_id, attempt.trial)?.history || []" :key="index" class="eval-meta">{{ entry.reviewed_at.slice(0, 19).replace('T', ' ') }} · {{ entry.reviewer }} · {{ entry.note }}</p></details>
+                </div>
+              </div>
               <details><summary>完整轨迹（JSON）</summary><pre>{{ JSON.stringify(item.result, null, 2) }}</pre></details>
             </div>
           </article>
@@ -368,6 +449,22 @@ function failureLabel(value: EvalFailureAttribution | null) {
       </div>
       <p v-if="reviewError" class="eval-error">{{ reviewError }}</p>
     </section>
+    <section class="eval-card eval-history">
+      <h2>7 · 人工标签与判分校准</h2>
+      <p>在运行报告中展开单次试验进行人工标注。下方只统计实时运行的有效标签；离线演示标签仅用于练习。</p>
+      <button class="eval-secondary" :disabled="calibrationBusy" @click="refreshCalibration">{{ calibrationBusy ? '正在统计…' : '查看人工校准统计' }}</button>
+      <p v-if="calibrationError" class="eval-error">{{ calibrationError }}</p>
+      <template v-if="calibration">
+        <p class="eval-meta">实时试验 {{ calibration.live_attempts }} 次 · 已标注 {{ calibration.labeled_attempts }} 次 · 过期标签 {{ calibration.stale_labels }} 次 · 离线练习标签 {{ calibration.demo_practice }} 次</p>
+        <p v-if="!calibration.labeled_attempts" class="eval-notice">尚无真实运行的有效人工标签，无法评估判分器一致性。</p>
+        <article v-for="group in calibration.groups" :key="group.grader_hash" class="eval-result">
+          <h3>判分器 {{ group.grader_hash }} · {{ group.attempts }} 次已标注试验</h3>
+          <p v-for="dimension in calibrationDimensions" :key="dimension.key" class="eval-meta">{{ dimension.label }}：一致率 {{ formatAgreement(group.dimensions[dimension.key].agreement) }} · TP {{ group.dimensions[dimension.key].tp }} · FP {{ group.dimensions[dimension.key].fp }} · FN {{ group.dimensions[dimension.key].fn }} · TN {{ group.dimensions[dimension.key].tn }} · 无法判断 {{ group.dimensions[dimension.key].unsure }}</p>
+          <p class="eval-meta">回答质量（仅人工）：通过 {{ group.report_quality.pass }} · 未通过 {{ group.report_quality.fail }} · 无法判断 {{ group.report_quality.unsure }}</p>
+        </article>
+        <p class="eval-notice">TP/FP/FN/TN 以人工标签为参照；样本少或题目未经审核时，这些数字只用于定位分歧。</p>
+      </template>
+    </section>
   </div>
 </template>
 
@@ -378,4 +475,5 @@ function failureLabel(value: EvalFailureAttribution | null) {
 .eval-cancel{margin-left:10px;color:#a33f49;background:#fff0f1}.eval-cancel:disabled{opacity:.55;cursor:wait}
 .eval-provenance{margin:12px 0;color:#566a86;font-size:13px}.eval-provenance summary{cursor:pointer}.eval-provenance pre{white-space:pre-wrap;overflow:auto;background:#f5f7fa;padding:12px;border-radius:8px}
 .eval-review-layout{display:grid;grid-template-columns:minmax(240px,360px) 1fr;gap:20px;margin-top:16px}.eval-review-list{max-height:500px;overflow:auto;border:1px solid #e0e7ef;border-radius:8px}.eval-review-list button{width:100%;display:grid;gap:5px;text-align:left;padding:12px;border:0;border-bottom:1px solid #edf1f5;background:white;cursor:pointer}.eval-review-list button.active{background:#f1f5ff}.eval-review-list small{color:#78879c}.eval-review-detail{min-width:0}.eval-review-detail h3{margin:0 0 10px}.eval-review-detail p{line-height:1.5}.eval-review-detail details{margin:10px 0}.eval-review-detail summary{cursor:pointer;color:#345fe5}.eval-review-detail pre{white-space:pre-wrap;overflow:auto;max-height:300px;background:#f5f7fa;padding:12px;border-radius:8px}.eval-review-note{display:grid;gap:7px;margin:16px 0;color:#63758e}.eval-review-note textarea{width:100%;box-sizing:border-box;border:1px solid #d8e1ec;border-radius:8px;padding:10px;font:inherit}.eval-review-actions{display:flex;gap:10px}.eval-review-actions .eval-cancel{margin-left:0}@media(max-width:850px){.eval-review-layout{grid-template-columns:1fr}.eval-review-list{max-height:240px}}
+.eval-trace .eval-review-detail{display:grid;gap:9px;margin:12px 0;padding:12px;background:#f6f8fc;border-radius:8px}.eval-trace .eval-review-detail label{display:grid;gap:5px}.eval-trace .eval-review-detail select,.eval-trace .eval-review-detail textarea{width:100%;box-sizing:border-box;border:1px solid #d8e1ec;border-radius:7px;padding:8px;font:inherit}
 </style>

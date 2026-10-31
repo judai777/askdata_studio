@@ -44,6 +44,12 @@ class EvalCandidateRequest(BaseModel):
     model: str
 
 
+class EvalLabelRequest(BaseModel):
+    fingerprint: str
+    labels: dict[str, str]
+    note: str
+
+
 def require_user(
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> AuthUser:
@@ -75,6 +81,11 @@ def eval_models(_: AuthUser = Depends(require_admin)) -> dict:
 @router.get("/eval/audit")
 def eval_audit(_: AuthUser = Depends(require_admin)) -> dict:
     return evaluation_service.audit()
+
+
+@router.get("/eval/calibration")
+def eval_calibration(_: AuthUser = Depends(require_admin)) -> dict:
+    return evaluation_service.calibration()
 
 
 @router.get("/eval/reviews")
@@ -142,6 +153,26 @@ def eval_start_candidate(run_id: str, payload: EvalCandidateRequest, _: AuthUser
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail="评测运行不存在") from error
     except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.get("/eval/runs/{run_id}/labels")
+def eval_run_labels(run_id: str, _: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return evaluation_service.labels(run_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="评测运行不存在") from error
+
+
+@router.post("/eval/runs/{run_id}/labels/{task_id}/{trial}")
+def eval_submit_label(run_id: str, task_id: str, trial: int, payload: EvalLabelRequest, user: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return evaluation_service.submit_label(run_id, task_id, trial, payload.fingerprint, payload.labels, payload.note, user.user_id)
+    except (FileNotFoundError, KeyError) as error:
+        raise HTTPException(status_code=404, detail="评测试验不存在") from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 

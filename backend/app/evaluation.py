@@ -22,6 +22,7 @@ from sqlglot import exp
 
 from .config import BASE_DIR, Settings, settings
 from .eval_models import resolve_model
+from . import eval_labels
 from .eval_grader_version import grader_hash
 from .eval_provenance import compare_provenance, provenance_snapshot
 from .eval_export import export_report
@@ -314,6 +315,7 @@ class EvaluationService:
         self._active_run_id: str | None = None
         self._cancel_event: Event | None = None
         self._review_lock = Lock()
+        self._label_lock = Lock()
 
     def catalog(self) -> dict[str, Any]:
         return task_catalog()
@@ -350,6 +352,17 @@ class EvaluationService:
         indexed = {item["task_id"]: item for item in self.reviews()["tasks"]}
         counts = {status: sum(indexed[task_id]["status"] == status for task_id in task_ids) for status in ("approved", "rejected", "pending", "stale")}
         return {"total": len(task_ids), **counts}
+
+    def labels(self, run_id: str) -> dict[str, Any]:
+        return eval_labels.labels_for_run(self.get_run(run_id))
+
+    def submit_label(self, run_id: str, task_id: str, trial: int, fingerprint: str, labels: dict[str, str], note: str, reviewer: str) -> dict[str, Any]:
+        with self._label_lock:
+            return eval_labels.submit_label(self.get_run(run_id), task_id, trial, fingerprint, labels, note, reviewer)
+
+    def calibration(self) -> dict[str, Any]:
+        runs = [json.loads(path.read_text(encoding="utf-8")) for path in RUN_DIR.glob("*.json")] if RUN_DIR.exists() else []
+        return eval_labels.calibration_summary(runs)
 
     def review_preview(self, task_id: str) -> dict[str, Any]:
         indexed = {task["id"]: task for task in self.catalog()["tasks"]}
