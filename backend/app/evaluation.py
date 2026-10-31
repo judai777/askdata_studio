@@ -26,6 +26,7 @@ from . import eval_labels
 from .eval_grader_version import grader_hash
 from .eval_schema_metrics import aggregate_schema_fields, load_field_targets, score_attempt_fields
 from .eval_sql_metrics import aggregate_sql_attempts, score_sql_attempt
+from .eval_latency_metrics import aggregate_sql_latencies
 from .eval_provenance import compare_provenance, provenance_snapshot
 from .eval_export import export_report
 from .model_client import ModelClient
@@ -709,6 +710,7 @@ class EvaluationService:
         record["summary"]["metrics"] = aggregate_metrics([attempt for case in cases for attempt in case.get("attempts", [])])
         record["summary"]["schema_fields"] = aggregate_schema_fields([attempt.get("schema_fields") for case in cases for attempt in case.get("attempts", [])]) if record.get("mode") == "live" else None
         record["summary"]["sql_outcome"] = aggregate_sql_attempts([attempt.get("sql_outcome") for case in cases for attempt in case.get("attempts", [])]) if record.get("mode") == "live" else None
+        record["summary"]["sql_latency"] = aggregate_sql_latencies(cases, record.get("mode", "demo"))
         record["summary"]["stage_metrics"] = aggregate_stages([stage for case in cases for attempt in case.get("attempts", []) for stage in attempt.get("stages", [])])
         record["summary"]["failure_summary"] = failure_summary(cases) if any("failure_attribution" in attempt for case in cases for attempt in case.get("attempts", [])) else None
 

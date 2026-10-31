@@ -121,13 +121,14 @@ class EvaluationTest(unittest.TestCase):
         verdict = {"passed": False, "checks": {"execution": False}, "dimensions": {"completion": False, "safety": True, "process": False}}
         def execute(*_args, **_kwargs):
             fake.workflow.stage_telemetry.append({"stage": "preprocess", "elapsed_ms": 8.5, "success": False, "failure_type": "model_unavailable_fallback"})
+            fake.workflow.stage_telemetry.append({"stage": "mcp_tool_call", "tool": "query_askdata_mock", "elapsed_ms": 4.5, "success": True})
             return {"status": "completed", "retrieval": {"hits": [{"database_id": "askdata_mock", "table_id": "orders_current", "field_name": "region"}]}, "tool_calls": [{"database": "askdata_mock", "sql": "SELECT region FROM orders_current", "success": True}]}
         with patch("app.evaluation.AskDataService", return_value=fake), patch.object(service, "_execute_case", side_effect=execute), patch("app.evaluation.grade", return_value=verdict):
             run = service.run("live", ["mock.region_sales"])
         self.assertTrue(fake.workflow.stage_telemetry_enabled)
         self.assertEqual(run["cases"][0]["attempts"][0]["stages"][0]["stage"], "preprocess")
-        self.assertEqual(run["cases"][0]["stage_metrics"][0]["elapsed_ms"], 8.5)
-        self.assertEqual(run["summary"]["stage_metrics"][0]["calls"], 1)
+        self.assertEqual(next(item for item in run["cases"][0]["stage_metrics"] if item["stage"] == "preprocess")["elapsed_ms"], 8.5)
+        self.assertEqual(next(item for item in run["summary"]["stage_metrics"] if item["stage"] == "preprocess")["calls"], 1)
         self.assertEqual(run["cases"][0]["failure_attribution"]["stage"], "preprocess")
         self.assertEqual(run["summary"]["failure_summary"], [{"kind": "stage", "stage": "preprocess", "count": 1}])
         self.assertEqual(run["cases"][0]["attempts"][0]["schema_fields"]["matched_count"], 1)
@@ -135,7 +136,9 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(service.export(run["id"])["summary"]["schema_fields"]["labeled_tasks"], 1)
         self.assertEqual(run["summary"]["sql_outcome"], {"attempts": 1, "executed": 1, "result_correct": 0})
         self.assertEqual(service.export(run["id"])["summary"]["sql_outcome"]["executed"], 1)
-        self.assertEqual(service.get_run(run["id"], replay=True)["summary"]["stage_metrics"][0]["elapsed_ms"], 8.5)
+        self.assertEqual(run["summary"]["sql_latency"]["database_tool"], {"count": 1, "mean_ms": 4.5, "p95_ms": 4.5})
+        self.assertEqual(service.export(run["id"])["summary"]["sql_latency"]["database_tool"]["count"], 1)
+        self.assertEqual(next(item for item in service.get_run(run["id"], replay=True)["summary"]["stage_metrics"] if item["stage"] == "preprocess")["elapsed_ms"], 8.5)
 
     def test_remote_request_budget_stops_remaining_tasks_and_keeps_report(self) -> None:
         config = Settings(api_key="test-secret-key", llm_model="test-chat")

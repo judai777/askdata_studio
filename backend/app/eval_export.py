@@ -65,6 +65,16 @@ def _safe_sql_outcome(source: dict[str, Any] | None) -> dict[str, bool | None] |
     return {field: source[field] if type(source.get(field)) is bool else None for field in ("executed", "result_correct")}
 
 
+def _safe_latency(source: dict[str, Any] | None) -> dict[str, Any] | None:
+    if source is None:
+        return None
+    return {
+        "sql_attempts": source.get("sql_attempts") if type(source.get("sql_attempts")) is int else None,
+        "end_to_end": _safe_numbers(source.get("end_to_end"), ("count", "mean_ms", "p95_ms")),
+        "database_tool": _safe_numbers(source.get("database_tool"), ("count", "mean_ms", "p95_ms")),
+    }
+
+
 def _attribution(source: dict[str, Any] | None) -> dict[str, Any] | None:
     if source is None or source.get("kind") not in {"stage", "grader", "runner"}:
         return None
@@ -119,6 +129,7 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
                     "metrics": _metrics(summary.get("metrics")),
                     "schema_fields": _safe_numbers(summary.get("schema_fields"), ("labeled_tasks", "unlabeled_tasks", "macro_recall", "macro_precision")),
                     "sql_outcome": _safe_numbers(summary.get("sql_outcome"), ("attempts", "executed", "result_correct")),
+                    "sql_latency": _safe_latency(summary.get("sql_latency")),
                     "stage_metrics": _stages(summary.get("stage_metrics")),
                     **({"failure_summary": [{"kind": item["kind"], "stage": item.get("stage") if item.get("stage") in STAGE_NAMES else None, "count": item["count"]} for item in (summary.get("failure_summary") or []) if item.get("kind") in {"stage", "grader", "runner"} and type(item.get("count")) is int]} if "failure_summary" in summary else {})},
         "cases": cases,
