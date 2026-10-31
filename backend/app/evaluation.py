@@ -401,6 +401,23 @@ class EvaluationService:
                     expected[fixture_id] = self._oracle(task, engine)
         return {**item, "task": task, "oracle_sql": sql, "expected_rows": expected, "history": self._review_records().get(task_id, [])}
 
+    def check_candidate_sql(self, task_id: str, sql: str, fixture_id: str = "base") -> dict[str, Any]:
+        if not isinstance(sql, str) or not sql.strip() or len(sql) > 10_000:
+            raise ValueError("候选 SQL 不能为空，且不得超过 10,000 字符")
+        indexed = {task["id"]: task for task in self.catalog()["tasks"]}
+        task = indexed.get(task_id)
+        if not task or task.get("route") != "database_query" or task.get("kind") in {"clarification", "security_probe"}:
+            raise ValueError("该题不支持单条候选 SQL 验证")
+        review = next(item for item in self.reviews()["tasks"] if item["task_id"] == task_id)
+        if review["status"] != "approved":
+            raise ValueError("请先完成当前题目与数据版本的人工审核")
+        with fixture_engine(fixture_id) as engine:
+            expected = self._oracle(task, engine)
+            execution = engine.execute(task["database"], sql, AccessController().resolve("demo_admin"))
+        result = {"route": "database_query", "status": "completed" if execution.success else "failed", "sql": execution.sql, "rows": execution.rows, "tool_calls": [{"tool": f"query_{task['database']}", "database": task["database"], "sql": execution.sql, "success": execution.success}]}
+        verdict = grade(task, result, expected)
+        return {"task_id": task_id, "fixture_id": fixture_id, "fixture_hash": _fixture_hash(fixture_id), "execution_success": execution.success, "execution_error": execution.error, "result_correct": execution.success and verdict["checks"]["result"], "grade": verdict, "candidate_row_count": len(execution.rows), "expected_row_count": len(expected), "candidate_preview": execution.rows[:10], "expected_preview": expected[:10]}
+
     def submit_review(self, task_id: str, decision: str, note: str, fingerprint: str, reviewer: str) -> dict[str, Any]:
         if decision not in {"approved", "rejected"} or not note.strip():
             raise ValueError("请选择通过或退回，并填写审核意见")

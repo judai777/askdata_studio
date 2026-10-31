@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { api } from "../api"
-import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
+import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalCandidateSqlCheck, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
 
 const tasks = ref<EvalTask[]>([])
 const benchmarkReadiness = ref<EvalBenchmarkReadiness | null>(null)
+const candidateTaskId = ref("")
+const candidateSql = ref("")
+const candidateFixture = ref<EvalFixtureId>("edge_v3")
+const candidateCheck = ref<EvalCandidateSqlCheck | null>(null)
+const candidateBusy = ref(false)
+const candidateError = ref("")
+const candidateTaskOptions = computed(() => tasks.value.filter(task => task.route === "database_query" && !task.kind && reviews.value?.tasks.some(item => item.task_id === task.id && item.status === "approved")))
 const selected = ref<string[]>([])
 const runs = ref<EvalRunSummary[]>([])
 const current = ref<EvalRun | null>(null)
@@ -83,6 +90,7 @@ onMounted(async () => {
     selected.value = catalog.tasks.slice(0, 5).map(task => task.id)
     runs.value = history
     reviews.value = reviewCatalog
+    candidateTaskId.value = candidateTaskOptions.value[0]?.id || ""
     benchmarkReadiness.value = readiness
     modelCatalog.value = models
     selectedModel.value = models.default
@@ -94,6 +102,16 @@ onMounted(async () => {
 
 function toggle(id: string) {
   selected.value = selected.value.includes(id) ? selected.value.filter(x => x !== id) : [...selected.value, id]
+}
+
+async function checkCandidateSql() {
+  candidateError.value = ""
+  candidateCheck.value = null
+  if (!candidateTaskId.value || !candidateSql.value.trim()) { candidateError.value = "请选择已审核题目并填写候选 SQL"; return }
+  candidateBusy.value = true
+  try { candidateCheck.value = await api.evalCheckCandidateSql(candidateTaskId.value, candidateSql.value, candidateFixture.value) }
+  catch (caught) { candidateError.value = String(caught) }
+  finally { candidateBusy.value = false }
 }
 
 function prepareSmokeRun() {
@@ -501,6 +519,23 @@ function failureLabel(value: EvalFailureAttribution | null) {
       <p>现有题属于 askdata_mock；目标基准使用 ecommerce_ops，两组题分别统计。</p>
       <div class="eval-metrics"><span>现有题 {{ benchmarkReadiness.existing.total }}，已审核 {{ benchmarkReadiness.existing.approved }}</span><span>SQL 题显式字段约束 {{ benchmarkReadiness.existing.with_field_constraints }}/{{ benchmarkReadiness.existing.sql_tasks }}</span><span>目标域开发题 {{ benchmarkReadiness.target.development }}/{{ benchmarkReadiness.target.development_goal }}</span><span>目标域保留题 {{ benchmarkReadiness.target.holdout }}/{{ benchmarkReadiness.target.holdout_goal }}</span></div>
       <p class="eval-notice">目标总量 {{ benchmarkReadiness.target.total_goal }} 题。现有字段约束还不是完整的目标字段标注；这里显示准备进度，不代表模型成绩。</p>
+    </section>
+    <section class="eval-card eval-history">
+      <h2>9 · 无模型候选 SQL 验证</h2>
+      <p>粘贴外部生成的 SQL，在固定数据上执行并与已审核答案比较；不调用模型，也不计入模型成绩。</p>
+      <label class="eval-option">题目 <select v-model="candidateTaskId"><option v-for="task in candidateTaskOptions" :key="task.id" :value="task.id">{{ task.query }}</option></select></label>
+      <label class="eval-option">数据集 <select v-model="candidateFixture"><option v-for="fixture in auditFixtures" :key="fixture.id" :value="fixture.id">{{ fixture.label }}</option></select></label>
+      <label class="eval-review-note">候选 SQL<textarea v-model="candidateSql" rows="5" maxlength="10000" placeholder="SELECT ..."></textarea></label>
+      <button class="eval-secondary" :disabled="candidateBusy || !candidateTaskId" @click="checkCandidateSql">{{ candidateBusy ? '正在验证…' : '验证候选 SQL' }}</button>
+      <p v-if="candidateError" class="eval-error">{{ candidateError }}</p>
+      <div v-if="candidateCheck" class="eval-result">
+        <p>执行：<b :class="candidateCheck.execution_success ? 'pass' : 'fail'">{{ candidateCheck.execution_success ? '成功' : '失败' }}</b> · 结果：<b :class="candidateCheck.result_correct ? 'pass' : 'fail'">{{ candidateCheck.result_correct ? '正确' : '不匹配' }}</b></p>
+        <p v-if="candidateCheck.execution_error" class="eval-error">{{ candidateCheck.execution_error }}</p>
+        <p class="eval-meta">{{ candidateCheck.task_id }} · {{ candidateCheck.fixture_id }} · 数据指纹 {{ candidateCheck.fixture_hash }}</p>
+        <p class="eval-meta">判分检查：<span v-for="(passed, name) in candidateCheck.grade.checks" :key="name">{{ name }} {{ passed ? '通过' : '未通过' }}　</span></p>
+        <details><summary>查看候选结果前 10 行（执行器返回 {{ candidateCheck.candidate_row_count }} 行，最多 200 行）</summary><pre>{{ JSON.stringify(candidateCheck.candidate_preview, null, 2) }}</pre></details>
+        <details><summary>查看标准结果前 10 行（执行器返回 {{ candidateCheck.expected_row_count }} 行，最多 200 行）</summary><pre>{{ JSON.stringify(candidateCheck.expected_preview, null, 2) }}</pre></details>
+      </div>
     </section>
   </div>
 </template>

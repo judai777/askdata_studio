@@ -93,6 +93,7 @@ export const api = {
   evalReviewPreview: (taskId: string) => request<EvalReviewPreview>(`/api/eval/reviews/${encodeURIComponent(taskId)}/preview`),
   evalSubmitReview: (taskId: string, decision: "approved" | "rejected", note: string, fingerprint: string) => request<{ task_id: string; status: string }>(`/api/eval/reviews/${encodeURIComponent(taskId)}`, { method: "POST", body: JSON.stringify({ decision, note, fingerprint }) }),
   evalAudit: () => request<EvalAudit>("/api/eval/audit"),
+  evalCheckCandidateSql: (taskId: string, sql: string, fixtureId: EvalFixtureId) => request<EvalCandidateSqlCheck>("/api/eval/candidate-sql/check", { method: "POST", body: JSON.stringify({ task_id: taskId, sql, fixture_id: fixtureId }) }),
   evalCalibration: () => request<EvalCalibration>("/api/eval/calibration"),
   evalRuns: () => request<EvalRunSummary[]>("/api/eval/runs"),
   evalRun: (mode: "demo" | "live", taskIds: string[], trials: 1 | 3, fixtureId: EvalFixtureId = "base", requestLimit?: number, model?: string) => request<EvalRun>("/api/eval/runs", { method: "POST", body: JSON.stringify({ mode, task_ids: taskIds, trials, fixture_id: fixtureId, request_limit: requestLimit, model }) }, 600_000),
@@ -107,7 +108,8 @@ export const api = {
   evalCompare: (baseline: string, candidate: string) => request<EvalComparison>(`/api/eval/compare?baseline=${encodeURIComponent(baseline)}&candidate=${encodeURIComponent(candidate)}`),
 }
 
-export interface EvalTask { id: string; category: string; query: string; route: string; required_tables?: string[] }
+export interface EvalTask { id: string; category: string; query: string; route: string; kind?: string; required_tables?: string[] }
+export interface EvalCandidateSqlCheck { task_id: string; fixture_id: EvalFixtureId; fixture_hash: string; execution_success: boolean; execution_error: string | null; result_correct: boolean; grade: { passed: boolean; checks: Record<string, boolean>; dimensions: Record<string, boolean> }; candidate_row_count: number; expected_row_count: number; candidate_preview: Record<string, unknown>[]; expected_preview: Record<string, unknown>[] }
 export interface EvalBenchmarkReadiness { task_version: string; existing: { total: number; approved: number; sql_tasks: number; with_field_constraints: number }; target: { database: string; development: number; development_goal: number; holdout: number; holdout_goal: number; total_goal: number } }
 export interface EvalReviewSpec { intent: string; result: string; process: string; pitfall: string }
 export interface EvalReviewRecord { decision: "approved" | "rejected"; note: string; reviewer: string; reviewed_at: string; fingerprint: string }

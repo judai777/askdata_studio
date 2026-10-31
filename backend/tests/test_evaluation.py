@@ -20,6 +20,33 @@ from app.main import app
 
 
 class EvaluationTest(unittest.TestCase):
+    def test_candidate_sql_check_requires_approved_query_and_admin(self) -> None:
+        task_id = "mock.region_sales"
+        service = EvaluationService()
+        with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.REVIEW_RECORD_FILE", Path(directory) / "reviews.json"):
+            with self.assertRaisesRegex(ValueError, "人工审核"):
+                service.check_candidate_sql(task_id, oracle_sql(task_id))
+            with self.assertRaisesRegex(ValueError, "不支持"):
+                service.check_candidate_sql("route.greeting", "SELECT 1")
+            fingerprint = next(item["fingerprint"] for item in service.reviews()["tasks"] if item["task_id"] == task_id)
+            service.submit_review(task_id, "approved", "核对口径", fingerprint, "demo_admin")
+            good = service.check_candidate_sql(task_id, oracle_sql(task_id), "edge_v3")
+            self.assertTrue(good["execution_success"])
+            self.assertTrue(good["result_correct"])
+            self.assertEqual(good["candidate_row_count"], good["expected_row_count"])
+            wrong = service.check_candidate_sql(task_id, "SELECT region, 0 AS sales FROM orders_current GROUP BY region")
+            self.assertTrue(wrong["execution_success"])
+            self.assertFalse(wrong["result_correct"])
+            write = service.check_candidate_sql(task_id, "DELETE FROM orders_current")
+            self.assertFalse(write["execution_success"])
+            external = service.check_candidate_sql(task_id, "SELECT content FROM read_text('/etc/passwd')")
+            self.assertFalse(external["execution_success"])
+            self.assertIn("外部数据读取", external["execution_error"])
+            with TestClient(app) as client:
+                sales = client.post("/api/auth/login", json={"username": "sales", "password": "sales123"}).json()["access_token"]
+                response = client.post("/api/eval/candidate-sql/check", headers={"Authorization": f"Bearer {sales}"}, json={"task_id": task_id, "sql": oracle_sql(task_id)})
+                self.assertEqual(response.status_code, 403)
+
     def test_demo_and_replay(self) -> None:
         service = EvaluationService()
         ids = ["mock.date_range", "mock.clarify_orders", "guard.restricted_database"]

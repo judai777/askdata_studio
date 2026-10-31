@@ -114,6 +114,8 @@ class DuckDbEngine:
             for table in database_tables
         }
         cte_names = {cte.alias_or_name for cte in statement.find_all(exp.CTE)}
+        if any(not isinstance(table.this, exp.Identifier) for table in statement.find_all(exp.Table)):
+            raise ValueError("SQL不允许调用外部数据读取表函数")
         referenced = {
             table.name
             for table in statement.find_all(exp.Table)

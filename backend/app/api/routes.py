@@ -44,6 +44,12 @@ class EvalCandidateRequest(BaseModel):
     model: str
 
 
+class EvalCandidateSqlRequest(BaseModel):
+    task_id: str
+    sql: str
+    fixture_id: str = "base"
+
+
 class EvalLabelRequest(BaseModel):
     fingerprint: str
     labels: dict[str, str]
@@ -86,6 +92,14 @@ def eval_models(_: AuthUser = Depends(require_admin)) -> dict:
 @router.get("/eval/audit")
 def eval_audit(_: AuthUser = Depends(require_admin)) -> dict:
     return evaluation_service.audit()
+
+
+@router.post("/eval/candidate-sql/check")
+def eval_candidate_sql_check(payload: EvalCandidateSqlRequest, _: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return evaluation_service.check_candidate_sql(payload.task_id, payload.sql, payload.fixture_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.get("/eval/calibration")
