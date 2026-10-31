@@ -6,7 +6,7 @@ from typing import Any
 
 
 SAFE_CONFIG_FIELDS = frozenset({
-    "llm_model", "embedding_model", "embedding_dimensions", "rerank_model",
+    "llm_model", "embedding_model", "embedding_dimensions", "rerank_model", "endpoint_hash",
     "temperature", "timeout", "max_retries", "schema_recall_threshold",
     "bm25_top_k", "dense_top_k", "rrf_top_k", "max_schema_fields",
     "mcp_max_tool_calls", "context_table_row_limit", "route_context_turns",
@@ -93,7 +93,7 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
     summary = record.get("summary") or {}
     return {
         "format_version": "1.0", "exported_at": datetime.now(timezone.utc).isoformat(),
-        "run": _pick(record, ("id", "mode", "status", "started_at", "finished_at", "trials", "model", "task_version", "fixture_id", "fixture_hash", "oracle_hash", "grader_hash", "model_task_count")),
+        "run": {**(_pick(record, ("id", "mode", "status", "started_at", "finished_at", "trials", "model", "task_version", "fixture_id", "fixture_hash", "oracle_hash", "grader_hash", "model_task_count", "baseline_run_id")) or {}), "task_ids": [task_id for task_id in (record.get("task_ids") or []) if isinstance(task_id, str)] if "task_ids" in record else None},
         "provenance": {
             "kind": provenance.get("kind"), "prompt_hash": provenance.get("prompt_hash"),
             "workflow_hash": provenance.get("workflow_hash"),

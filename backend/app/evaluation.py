@@ -457,10 +457,10 @@ class EvaluationService:
         client = ModelClient(config)
         return AskDataService(model_client=client, schema_index=SchemaIndex(client, config))
 
-    def start(self, mode: str, task_ids: list[str], trials: int = 1, fixture_id: str = "base", request_limit: int | None = None, model: str | None = None) -> dict[str, Any]:
+    def start(self, mode: str, task_ids: list[str], trials: int = 1, fixture_id: str = "base", request_limit: int | None = None, model: str | None = None, *, model_config: Settings | None = None, baseline_run_id: str | None = None) -> dict[str, Any]:
         indexed = self._validate(mode, task_ids, trials)
         request_limit = self._request_limit(mode, request_limit)
-        model_config = resolve_model(mode, model)
+        model_config = model_config or resolve_model(mode, model)
         fixture_hash = _fixture_hash(fixture_id)
         check_service = self._live_service(model_config) if model_config else None
         if check_service and not check_service.model_client.enabled:
@@ -476,9 +476,31 @@ class EvaluationService:
             queued = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "queued", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": self.catalog()["version"], "fixture_hash": fixture_hash, "oracle_hash": _oracle_hash(), "provenance": provenance, "review": self.review_summary(task_ids), "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": "", "model": model_config.llm_model if model_config else "offline-demo", "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
             queued["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
             queued["grader_hash"] = grader_hash()
+            queued["task_ids"] = list(task_ids)
+            if baseline_run_id:
+                queued["baseline_run_id"] = baseline_run_id
             self._save(queued)
-            self._executor.submit(self._run_background, mode, task_ids, trials, run_id, fixture_id, self._cancel_event, request_limit, model_config)
+            self._executor.submit(self._run_background, mode, task_ids, trials, run_id, fixture_id, self._cancel_event, request_limit, model_config, baseline_run_id)
         return {"id": run_id, "status": "queued"}
+
+    def start_candidate(self, baseline_id: str, model: str) -> dict[str, Any]:
+        baseline = self.get_run(baseline_id)
+        if baseline.get("status") != "completed" or baseline.get("mode") != "live":
+            raise ValueError("只有已完成的实时运行可作为基线")
+        task_ids = baseline.get("task_ids")
+        budget = baseline.get("request_budget") or {}
+        if not isinstance(task_ids, list) or not task_ids or type(budget.get("limit")) is not int or not baseline.get("grader_hash"):
+            raise ValueError("旧运行缺少完整实验条件，请重新创建基线")
+        if baseline.get("task_version") != self.catalog()["version"] or baseline.get("fixture_hash") != _fixture_hash(baseline.get("fixture_id", "base")) or baseline.get("oracle_hash") != _oracle_hash() or baseline["grader_hash"] != grader_hash():
+            raise ValueError("任务、数据、标准答案或判分器已变化，请重新创建基线")
+        config = resolve_model("live", model)
+        current = provenance_snapshot("live", config)
+        previous = baseline.get("provenance") or {}
+        old_config = previous.get("config") or {}
+        if previous.get("prompt_hash") != current["prompt_hash"] or previous.get("workflow_hash") != current["workflow_hash"] or {k: v for k, v in old_config.items() if k != "llm_model"} != {k: v for k, v in current["config"].items() if k != "llm_model"} or not old_config:
+            raise ValueError("提示词、工作流或非 Chat 模型配置已变化，请重新创建基线")
+        started = self.start("live", task_ids, baseline["trials"], baseline.get("fixture_id", "base"), budget["limit"], model, model_config=config, baseline_run_id=baseline_id)
+        return {**started, "baseline_run_id": baseline_id}
 
     def cancel(self, run_id: str) -> dict[str, str]:
         with self._lock:
@@ -504,12 +526,12 @@ class EvaluationService:
         self._save(record)
         return record
 
-    def _run_background(self, mode: str, task_ids: list[str], trials: int, run_id: str, fixture_id: str, cancel_event: Event, request_limit: int | None = None, model_config: Settings | None = None) -> None:
+    def _run_background(self, mode: str, task_ids: list[str], trials: int, run_id: str, fixture_id: str, cancel_event: Event, request_limit: int | None = None, model_config: Settings | None = None, baseline_run_id: str | None = None) -> None:
         try:
             if cancel_event.is_set():
                 self._finish_cancelled(self.get_run(run_id))
             else:
-                self.run(mode, task_ids, trials, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event, request_limit=request_limit, model_config=model_config)
+                self.run(mode, task_ids, trials, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event, request_limit=request_limit, model_config=model_config, baseline_run_id=baseline_run_id)
         except Exception as exc:
             record = self.get_run(run_id)
             record["status"] = "failed"
@@ -531,11 +553,11 @@ class EvaluationService:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def run(self, mode: str, task_ids: list[str], trials: int = 1, *, run_id: str | None = None, fixture_id: str = "base", cancel_event: Event | None = None, request_limit: int | None = None, model: str | None = None, model_config: Settings | None = None) -> dict[str, Any]:
+    def run(self, mode: str, task_ids: list[str], trials: int = 1, *, run_id: str | None = None, fixture_id: str = "base", cancel_event: Event | None = None, request_limit: int | None = None, model: str | None = None, model_config: Settings | None = None, baseline_run_id: str | None = None) -> dict[str, Any]:
         with fixture_engine(fixture_id) as engine:
-            return self._run_on_engine(mode, task_ids, trials, engine, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event, request_limit=request_limit, model=model, model_config=model_config)
+            return self._run_on_engine(mode, task_ids, trials, engine, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event, request_limit=request_limit, model=model, model_config=model_config, baseline_run_id=baseline_run_id)
 
-    def _run_on_engine(self, mode: str, task_ids: list[str], trials: int, engine: DuckDbEngine, *, run_id: str | None, fixture_id: str, cancel_event: Event | None = None, request_limit: int | None = None, model: str | None = None, model_config: Settings | None = None) -> dict[str, Any]:
+    def _run_on_engine(self, mode: str, task_ids: list[str], trials: int, engine: DuckDbEngine, *, run_id: str | None, fixture_id: str, cancel_event: Event | None = None, request_limit: int | None = None, model: str | None = None, model_config: Settings | None = None, baseline_run_id: str | None = None) -> dict[str, Any]:
         indexed = self._validate(mode, task_ids, trials)
         request_limit = self._request_limit(mode, request_limit)
         model_config = model_config or resolve_model(mode, model)
@@ -554,6 +576,9 @@ class EvaluationService:
         record: dict[str, Any] = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "running", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": catalog["version"], "fixture_hash": _fixture_hash(fixture_id), "oracle_hash": _oracle_hash(), "provenance": provenance_snapshot(mode, service.config if service else None), "review": self.review_summary(task_ids), "model": service.config.llm_model if service else "offline-demo", "started_at": datetime.now(timezone.utc).isoformat(), "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
         record["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
         record["grader_hash"] = grader_hash()
+        record["task_ids"] = list(task_ids)
+        if baseline_run_id:
+            record["baseline_run_id"] = baseline_run_id
         self._save(record)
         for task_id in task_ids:
             if cancel_event and cancel_event.is_set():
@@ -645,7 +670,7 @@ class EvaluationService:
         result = []
         for path in sorted(RUN_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:30]:
             run = json.loads(path.read_text(encoding="utf-8"))
-            item = {key: run[key] for key in ("id", "mode", "model", "fixture_id", "started_at", "status", "progress", "summary", "request_budget", "grader_hash") if key in run}
+            item = {key: run[key] for key in ("id", "mode", "model", "fixture_id", "started_at", "status", "progress", "summary", "request_budget", "grader_hash", "baseline_run_id") if key in run}
             if item.get("id") == self._active_run_id and item.get("status") in {"queued", "running"} and self._cancel_event and self._cancel_event.is_set():
                 item["status"] = "cancel_requested"
             result.append(item)

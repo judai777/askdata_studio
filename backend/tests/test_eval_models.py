@@ -43,7 +43,8 @@ class EvalModelTest(unittest.TestCase):
             queued = service.start("live", ["guard.restricted_database"], model="candidate-a")
         self.assertEqual(service.get_run(queued["id"])["model"], "candidate-a")
         self.assertEqual(len(service.get_run(queued["id"])["grader_hash"]), 16)
-        self.assertIs(submit.call_args.args[-1], config)
+        self.assertIs(submit.call_args.args[-2], config)
+        self.assertIsNone(submit.call_args.args[-1])
 
     def test_api_lists_models_and_rejects_unregistered_choice(self) -> None:
         with patch.dict("os.environ", {"EVAL_LLM_MODELS": "candidate-a"}), TestClient(app) as client:

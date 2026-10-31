@@ -40,6 +40,10 @@ class EvalReviewRequest(BaseModel):
     fingerprint: str
 
 
+class EvalCandidateRequest(BaseModel):
+    model: str
+
+
 def require_user(
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> AuthUser:
@@ -128,6 +132,16 @@ def eval_start(payload: EvalRunRequest, _: AuthUser = Depends(require_admin)) ->
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/eval/runs/{run_id}/candidate")
+def eval_start_candidate(run_id: str, payload: EvalCandidateRequest, _: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return evaluation_service.start_candidate(run_id, payload.model)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="评测运行不存在") from error
+    except (ValueError, RuntimeError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 

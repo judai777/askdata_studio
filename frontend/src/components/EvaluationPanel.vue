@@ -46,6 +46,11 @@ async function pollRun() {
       if (timer !== null) window.clearInterval(timer)
       timer = null
       runs.value = await api.evalRuns()
+      if (current.value.status === "completed" && current.value.baseline_run_id) {
+        baselineId.value = current.value.baseline_run_id
+        candidateId.value = current.value.id
+        await compareRuns()
+      }
     }
   } catch (caught) { error.value = String(caught) }
   finally { polling = false }
@@ -90,8 +95,37 @@ async function start() {
 }
 
 async function openRun(id: string) {
-  try { current.value = await api.evalDetail(id); error.value = ""; watchRun() }
+  try {
+    current.value = await api.evalDetail(id)
+    error.value = ""
+    if (current.value.mode === "live") mode.value = "live"
+    if (current.value.baseline_run_id) {
+      baselineId.value = current.value.baseline_run_id
+      candidateId.value = current.value.id
+      if (current.value.status === "completed") await compareRuns()
+    }
+    watchRun()
+  }
   catch (caught) { error.value = String(caught) }
+}
+
+async function startCandidate() {
+  const baseline = current.value
+  if (!baseline || !baseline.task_ids?.length || !baseline.request_budget || !selectedModel.value) return
+  const attempts = baseline.task_ids.length * baseline.trials
+  if (!window.confirm(`以运行 ${baseline.id} 为基线（${baseline.model}），使用候选 Chat 模型 ${selectedModel.value}。固定 ${baseline.task_ids.length} 题、${attempts} 次任务试验、${baseline.fixture_id || 'base'} 数据和 ${baseline.request_budget.limit} 次远程 HTTP 请求上限（含重试）；可能产生 API 费用。继续吗？`)) return
+  busy.value = true
+  error.value = ""
+  try {
+    const started = await api.evalStartCandidate(baseline.id, selectedModel.value)
+    baselineId.value = baseline.id
+    candidateId.value = started.id
+    comparison.value = null
+    current.value = await api.evalDetail(started.id)
+    watchRun()
+    runs.value = await api.evalRuns()
+  } catch (caught) { error.value = String(caught) }
+  finally { busy.value = false }
 }
 
 async function replay() {
@@ -238,6 +272,8 @@ function failureLabel(value: EvalFailureAttribution | null) {
           <p v-if="current.summary.failure_summary?.length" class="eval-notice">失败归因（按失败试验计）：<span v-for="item in current.summary.failure_summary" :key="`${item.kind}-${item.stage}`">{{ failureLabel({ kind: item.kind, stage: item.stage, failed_checks: [] }) }} {{ item.count }} 次　</span></p>
           <p v-if="current.trials === 3" class="eval-meta">{{ current.mode === 'live' ? '模型任务 Pass³' : '演示流程 Pass³' }}：{{ current.summary.pass3 }} / {{ current.model_task_count ?? current.cases.filter(item => item.kind !== 'security_probe').length }}。权限护栏题单独运行一次。</p>
           <p class="eval-meta">任务集 v{{ current.task_version }} · {{ current.fixture_id || 'base' }} · 数据指纹 {{ current.fixture_hash }}</p>
+          <p v-if="current.baseline_run_id" class="eval-meta">候选运行 · 基线 {{ current.baseline_run_id }} · 固定题目、数据、试验次数和请求上限</p>
+          <p v-if="current.task_ids?.length" class="eval-meta">本次选题：{{ current.task_ids.join('、') }}</p>
           <p class="eval-meta">原始判分器 {{ current.grader_hash || '未知（旧运行）' }}<span v-if="current.replay_grader_hash"> · 本次重放判分器 {{ current.replay_grader_hash }}</span></p>
           <p v-if="current.replay_grader_hash && current.grader_hash && current.replay_grader_hash !== current.grader_hash" class="eval-notice">本次重放使用了不同的判分器，重判结果可能与原始报告不同；原始记录未被覆盖。</p>
           <p v-if="current.review" class="eval-meta">运行时人工审核：{{ current.review.approved }}/{{ current.review.total }} 题已通过 <span v-if="current.review.pending || current.review.stale || current.review.rejected">· 其余题分数仅供开发验证</span></p>
@@ -245,6 +281,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
           <p v-else-if="current.mode === 'live'" class="eval-meta">旧运行缺少实现版本信息。</p>
           <details v-if="current.mode === 'live' && current.provenance?.config" class="eval-provenance"><summary>查看本次非敏感模型配置</summary><pre>{{ JSON.stringify(current.provenance.config, null, 2) }}</pre></details>
           <button class="eval-secondary" :disabled="busy || (current.status !== undefined && current.status !== 'completed')" @click="replay">重放并重新判分</button>
+          <button v-if="current.mode === 'live' && current.status === 'completed' && current.task_ids?.length && current.request_budget && current.grader_hash && !current.baseline_run_id" class="eval-secondary" :disabled="busy || !selectedModel" @click="startCandidate">以此为基线运行候选（{{ selectedModel }}）</button>
           <button class="eval-secondary" :disabled="exportBusy || !['completed', 'cancelled', 'budget_exhausted'].includes(current.status || 'completed')" @click="exportRun">{{ exportBusy ? '正在导出…' : '下载评测摘要' }}</button>
           <button v-if="['queued', 'running', 'cancel_requested'].includes(current.status || '')" class="eval-secondary eval-cancel" :disabled="cancelBusy || current.status === 'cancel_requested'" @click="cancelRun">{{ cancelBusy ? '正在请求…' : '停止后续试验' }}</button>
           <article v-for="item in current.cases" :key="item.task_id" class="eval-result">
@@ -263,7 +300,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <p v-else class="eval-empty">运行一个任务，或从历史记录中打开报告。</p>
       </section>
     </div>
-    <section class="eval-card eval-history"><h2>历史运行</h2><button v-for="run in runs" :key="run.id" @click="openRun(run.id)">{{ run.started_at.slice(0, 19).replace('T', ' ') }} · {{ run.mode }} · {{ run.fixture_id || 'base' }} · {{ run.model }} · {{ run.status || 'completed' }} · {{ run.summary.passed }}/{{ run.summary.total }}</button><p v-if="!runs.length">暂无运行记录</p></section>
+    <section class="eval-card eval-history"><h2>历史运行</h2><button v-for="run in runs" :key="run.id" @click="openRun(run.id)">{{ run.started_at.slice(0, 19).replace('T', ' ') }} · {{ run.mode }} · {{ run.fixture_id || 'base' }} · {{ run.model }}<span v-if="run.baseline_run_id"> · 候选 ← {{ run.baseline_run_id }}</span> · {{ run.status || 'completed' }} · {{ run.summary.passed }}/{{ run.summary.total }}</button><p v-if="!runs.length">暂无运行记录</p></section>
     <section class="eval-card eval-history">
       <h2>4 · 回归对比</h2>
       <p>选择同一任务版本、数据、模式、试验次数和判分器版本的两次已完成运行；仅比较共同题目。</p>

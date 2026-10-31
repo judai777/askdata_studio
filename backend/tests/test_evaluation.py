@@ -94,6 +94,7 @@ class EvaluationTest(unittest.TestCase):
         self.assertNotEqual(prompt_changed["workflow_hash"], workflow_changed["workflow_hash"])
         self.assertEqual(prompt_changed["prompt_hash"], workflow_changed["prompt_hash"])
         self.assertEqual(original["config"]["llm_model"], "test-chat")
+        self.assertNotEqual(original["config"]["endpoint_hash"], provenance_snapshot("live", Settings(api_key="test-secret-key", llm_base_url="https://other.example", llm_model="test-chat"))["config"]["endpoint_hash"])
         self.assertNotIn("test-secret-key", json.dumps(original))
         self.assertNotIn("private.example", json.dumps(original))
 

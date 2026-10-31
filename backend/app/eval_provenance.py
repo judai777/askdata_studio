@@ -43,6 +43,14 @@ def source_hash(paths: Sequence[str]) -> str:
     return digest.hexdigest()[:16]
 
 
+def _endpoint_hash(config: Settings) -> str:
+    digest = hashlib.sha256()
+    for name, value in (("chat", config.llm_base_url), ("embedding", config.embedding_base_url or config.llm_base_url), ("rerank", config.rerank_base_url)):
+        digest.update(name.encode("utf-8"))
+        digest.update(value.encode("utf-8"))
+    return digest.hexdigest()[:16]
+
+
 def provenance_snapshot(mode: str, config: Settings | None = None) -> dict[str, Any]:
     if mode == "demo":
         return {"kind": "demo", "prompt_hash": None, "workflow_hash": None, "config": None}
@@ -54,6 +62,7 @@ def provenance_snapshot(mode: str, config: Settings | None = None) -> dict[str, 
         "workflow_hash": source_hash(WORKFLOW_SOURCES),
         "config": {
             "llm_model": config.llm_model,
+            "endpoint_hash": _endpoint_hash(config),
             "embedding_model": config.embedding_model,
             "embedding_dimensions": config.embedding_dimensions,
             "rerank_model": config.rerank_model,
