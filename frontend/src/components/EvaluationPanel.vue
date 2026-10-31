@@ -17,6 +17,8 @@ const requestLimit = ref<20 | 50 | 100>(50)
 const modelCatalog = ref<EvalModelCatalog | null>(null)
 const selectedModel = ref("")
 const fixtureId = ref<EvalFixtureId>("base")
+const smokeTaskIds = ["mock.target_comparison", "grain.unique_customers", "time.july_august"]
+const smokeReady = computed(() => smokeTaskIds.every(id => reviews.value?.tasks.some(item => item.task_id === id && item.status === "approved")))
 const auditFixtures: { id: EvalFixtureId; label: string }[] = [{ id: "base", label: "原始" }, { id: "edge_v1", label: "边界 v1" }, { id: "edge_v2", label: "边界 v2" }, { id: "edge_v3", label: "边界 v3" }]
 const calibrationDimensions = [{ key: "completion", label: "完成度" }, { key: "safety", label: "安全" }, { key: "process", label: "过程" }] as const
 const expanded = ref("")
@@ -89,6 +91,16 @@ onMounted(async () => {
 
 function toggle(id: string) {
   selected.value = selected.value.includes(id) ? selected.value.filter(x => x !== id) : [...selected.value, id]
+}
+
+function prepareSmokeRun() {
+  if (!smokeReady.value) { error.value = "三道预设题尚未全部审核通过，请先完成复审"; return }
+  selected.value = [...smokeTaskIds]
+  mode.value = "live"
+  fixtureId.value = "edge_v3"
+  trials.value = 1
+  requestLimit.value = 20
+  error.value = ""
 }
 
 async function start() {
@@ -297,6 +309,8 @@ function failureLabel(value: EvalFailureAttribution | null) {
       <section class="eval-card">
         <h2>1 · 任务集</h2>
         <p>固定数据集上的可复现问题，单次最多 5 题。</p>
+        <button type="button" :disabled="!smokeReady || busy" @click="prepareSmokeRun">准备三题真实评测</button>
+        <p v-if="!smokeReady" class="eval-notice">预设需三道题当前审核均为通过；点击后只填写运行配置。</p>
         <label v-for="task in tasks" :key="task.id" class="eval-task">
           <input type="checkbox" :checked="selected.includes(task.id)" @change="toggle(task.id)">
           <span><strong>{{ task.query }}</strong><small>{{ task.category }} · {{ task.id }} · {{ reviewLabel(taskReviewStatus(task.id)) }}</small></span>
@@ -308,7 +322,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <label class="eval-option">独立试验 <select v-model.number="trials"><option :value="1">1 次</option><option :value="3">3 次（Pass³）</option></select></label>
         <label v-if="mode === 'live'" class="eval-option">远程请求上限 <select v-model.number="requestLimit"><option :value="20">20 次</option><option :value="50">50 次</option><option :value="100">100 次</option></select></label>
         <label class="eval-option">数据集 <select v-model="fixtureId"><option value="base">原始数据</option><option value="edge_v1">边界数据 v1</option><option value="edge_v2">边界数据 v2</option><option value="edge_v3">边界数据 v3</option></select></label>
-        <p v-if="fixtureId !== 'base'" class="eval-notice">边界数据在临时目录加入折扣、非已支付和日期端点记录；v2 再加入不同订单的同额实付记录。原始 CSV 不会改变。</p>
+        <p v-if="fixtureId !== 'base'" class="eval-notice">边界数据在临时目录加入折扣、非已支付和日期端点记录；v2 加入同额订单，v3 加入跨月订单与新客户。原始 CSV 不会改变。</p>
         <p v-if="mode === 'demo'" class="eval-notice">演示结果由固定 oracle 生成，用于体验流程，不代表模型准确率。</p>
         <p v-else class="eval-notice">模型列表由服务端登记；Embedding、Rerank 和其他配置沿用当前服务。顺序执行，可能产生 API 费用。请求上限包含重试，不是费用上限；权限护栏题不调用模型。{{ modelCatalog?.api_key_configured ? '' : '尚未配置远程密钥。' }}</p>
         <button class="eval-primary" :disabled="busy || ['queued', 'running', 'cancel_requested'].includes(current?.status || '') || !selected.length" @click="start">{{ busy ? '正在启动…' : '开始评测' }}</button>
