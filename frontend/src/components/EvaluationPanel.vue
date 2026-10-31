@@ -19,6 +19,7 @@ const selectedModel = ref("")
 const fixtureId = ref<EvalFixtureId>("base")
 const smokeTaskIds = ["mock.target_comparison", "grain.unique_customers", "time.july_august"]
 const smokeReady = computed(() => smokeTaskIds.every(id => reviews.value?.tasks.some(item => item.task_id === id && item.status === "approved")))
+const selectedApproved = computed(() => selected.value.filter(id => reviews.value?.tasks.some(item => item.task_id === id && item.status === "approved")).length)
 const auditFixtures: { id: EvalFixtureId; label: string }[] = [{ id: "base", label: "原始" }, { id: "edge_v1", label: "边界 v1" }, { id: "edge_v2", label: "边界 v2" }, { id: "edge_v3", label: "边界 v3" }]
 const calibrationDimensions = [{ key: "completion", label: "完成度" }, { key: "safety", label: "安全" }, { key: "process", label: "过程" }] as const
 const expanded = ref("")
@@ -106,7 +107,13 @@ function prepareSmokeRun() {
 async function start() {
   error.value = ""
   if (!selected.value.length || selected.value.length > 5 || (mode.value === "live" && trials.value === 3 && selected.value.length > 3)) { error.value = "请选择 1–5 题；三次实时试验最多 3 题"; return }
-  if (mode.value === "live" && !window.confirm(`Chat 模型：${selectedModel.value}。将调用远程 Chat、Embedding 和 Rerank API，最多执行 ${selected.value.length * trials.value} 次任务试验、发送 ${requestLimit.value} 次 HTTP 请求（重试也计入）。继续吗？`)) return
+  if (mode.value === "live") {
+    try { reviews.value = await api.evalReviews() }
+    catch (caught) { error.value = `无法核对最新审核状态：${String(caught)}`; return }
+    const coverage = `本次 ${selected.value.length} 题中 ${selectedApproved.value} 题已审核通过。`
+    const caveat = selectedApproved.value === selected.value.length ? "" : "其余题的结果仅用于探索，不能作为已审核题集成绩。"
+    if (!window.confirm(`${coverage}${caveat}Chat 模型：${selectedModel.value}。将调用远程 Chat、Embedding 和 Rerank API，最多执行 ${selected.value.length * trials.value} 次任务试验、发送 ${requestLimit.value} 次 HTTP 请求（重试也计入）。继续吗？`)) return
+  }
   busy.value = true
   try {
     const started = await api.evalStart(mode.value, selected.value, trials.value, fixtureId.value, mode.value === "live" ? requestLimit.value : undefined, mode.value === "live" ? selectedModel.value : undefined)
@@ -324,7 +331,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <label class="eval-option">数据集 <select v-model="fixtureId"><option value="base">原始数据</option><option value="edge_v1">边界数据 v1</option><option value="edge_v2">边界数据 v2</option><option value="edge_v3">边界数据 v3</option></select></label>
         <p v-if="fixtureId !== 'base'" class="eval-notice">边界数据在临时目录加入折扣、非已支付和日期端点记录；v2 加入同额订单，v3 加入跨月订单与新客户。原始 CSV 不会改变。</p>
         <p v-if="mode === 'demo'" class="eval-notice">演示结果由固定 oracle 生成，用于体验流程，不代表模型准确率。</p>
-        <p v-else class="eval-notice">模型列表由服务端登记；Embedding、Rerank 和其他配置沿用当前服务。顺序执行，可能产生 API 费用。请求上限包含重试，不是费用上限；权限护栏题不调用模型。{{ modelCatalog?.api_key_configured ? '' : '尚未配置远程密钥。' }}</p>
+        <p v-else class="eval-notice">当前选题已审核通过 {{ selectedApproved }}/{{ selected.length }}。模型列表由服务端登记；Embedding、Rerank 和其他配置沿用当前服务。顺序执行，可能产生 API 费用。请求上限包含重试，不是费用上限；权限护栏题不调用模型。{{ modelCatalog?.api_key_configured ? '' : '尚未配置远程密钥。' }}</p>
         <button class="eval-primary" :disabled="busy || ['queued', 'running', 'cancel_requested'].includes(current?.status || '') || !selected.length" @click="start">{{ busy ? '正在启动…' : '开始评测' }}</button>
         <p v-if="error" class="eval-error">{{ error }}</p>
       </section>
@@ -344,6 +351,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
           <p v-if="current.summary.failure_summary?.length" class="eval-notice">失败归因（按失败试验计）：<span v-for="item in current.summary.failure_summary" :key="`${item.kind}-${item.stage}`">{{ failureLabel({ kind: item.kind, stage: item.stage, failed_checks: [] }) }} {{ item.count }} 次　</span></p>
           <p v-if="current.trials === 3" class="eval-meta">{{ current.mode === 'live' ? '模型任务 Pass³' : '演示流程 Pass³' }}：{{ current.summary.pass3 }} / {{ current.model_task_count ?? current.cases.filter(item => item.kind !== 'security_probe').length }}。权限护栏题单独运行一次。</p>
           <p class="eval-meta">任务集 v{{ current.task_version }} · {{ current.fixture_id || 'base' }} · 数据指纹 {{ current.fixture_hash }}</p>
+          <p class="eval-meta">创建时审核覆盖：{{ current.review ? `${current.review.approved}/${current.review.total} 题通过` : '未知（旧运行）' }}<span v-if="current.review && current.review.approved < current.review.total"> · 其余题用于探索</span></p>
           <p v-if="current.baseline_run_id" class="eval-meta">候选运行 · 基线 {{ current.baseline_run_id }} · 固定题目、数据、试验次数和请求上限</p>
           <p v-if="current.task_ids?.length" class="eval-meta">本次选题：{{ current.task_ids.join('、') }}</p>
           <p class="eval-meta">原始判分器 {{ current.grader_hash || '未知（旧运行）' }}<span v-if="current.replay_grader_hash"> · 本次重放判分器 {{ current.replay_grader_hash }}</span></p>
