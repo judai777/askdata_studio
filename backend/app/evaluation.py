@@ -25,6 +25,7 @@ from .eval_models import resolve_model
 from . import eval_labels
 from .eval_grader_version import grader_hash
 from .eval_schema_metrics import aggregate_schema_fields, load_field_targets, score_attempt_fields
+from .eval_sql_metrics import aggregate_sql_attempts, score_sql_attempt
 from .eval_provenance import compare_provenance, provenance_snapshot
 from .eval_export import export_report
 from .model_client import ModelClient
@@ -651,7 +652,8 @@ class EvaluationService:
                     record["request_budget"]["used"] = service.model_client.request_count
                     record["request_budget"]["exhausted"] = service.model_client.request_budget_exhausted
                 schema_fields = score_attempt_fields(record["field_targets"].get(task_id), raw) if mode == "live" else None
-                attempts.append({"trial": trial + 1, "result": raw, "grade": verdict, "error": error, "model_calls": calls, "stages": stages, "metrics": attempt_metrics((time.monotonic() - started) * 1000, calls), "schema_fields": schema_fields})
+                sql_outcome = score_sql_attempt(task, raw, verdict, mode)
+                attempts.append({"trial": trial + 1, "result": raw, "grade": verdict, "error": error, "model_calls": calls, "stages": stages, "metrics": attempt_metrics((time.monotonic() - started) * 1000, calls), "schema_fields": schema_fields, "sql_outcome": sql_outcome})
                 record["progress"]["completed_attempts"] += 1
                 record["progress"]["current_trial"] = trial + 1
                 self._save(record)
@@ -706,6 +708,7 @@ class EvaluationService:
         record["summary"] = {"total": record.get("task_count", len(cases)), "passed": sum(all(a["grade"]["passed"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "completion": sum(all(a["grade"]["dimensions"]["completion"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "safety": sum(all(a["grade"]["dimensions"]["safety"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "process": sum(all(a["grade"]["dimensions"]["process"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "pass3": sum(c.get("pass3", False) for c in complete_cases) if record.get("trials") == 3 else None}
         record["summary"]["metrics"] = aggregate_metrics([attempt for case in cases for attempt in case.get("attempts", [])])
         record["summary"]["schema_fields"] = aggregate_schema_fields([attempt.get("schema_fields") for case in cases for attempt in case.get("attempts", [])]) if record.get("mode") == "live" else None
+        record["summary"]["sql_outcome"] = aggregate_sql_attempts([attempt.get("sql_outcome") for case in cases for attempt in case.get("attempts", [])]) if record.get("mode") == "live" else None
         record["summary"]["stage_metrics"] = aggregate_stages([stage for case in cases for attempt in case.get("attempts", []) for stage in attempt.get("stages", [])])
         record["summary"]["failure_summary"] = failure_summary(cases) if any("failure_attribution" in attempt for case in cases for attempt in case.get("attempts", [])) else None
 

@@ -53,6 +53,18 @@ def _metrics(source: dict[str, Any] | None) -> dict[str, Any] | None:
     return {field: source[field] if type(source.get(field)) in {int, float} else None for field in METRIC_FIELDS}
 
 
+def _safe_numbers(source: dict[str, Any] | None, fields: tuple[str, ...]) -> dict[str, int | float | None] | None:
+    if source is None:
+        return None
+    return {field: source[field] if type(source.get(field)) in {int, float} else None for field in fields}
+
+
+def _safe_sql_outcome(source: dict[str, Any] | None) -> dict[str, bool | None] | None:
+    if source is None:
+        return None
+    return {field: source[field] if type(source.get(field)) is bool else None for field in ("executed", "result_correct")}
+
+
 def _attribution(source: dict[str, Any] | None) -> dict[str, Any] | None:
     if source is None or source.get("kind") not in {"stage", "grader", "runner"}:
         return None
@@ -79,7 +91,8 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
             "trial": attempt.get("trial"),
             "grade": _grade(attempt.get("grade") or {}),
             "metrics": _metrics(attempt.get("metrics")),
-            "schema_fields": _pick(attempt.get("schema_fields"), ("target_count", "retrieved_count", "matched_count", "recall", "precision")),
+            "schema_fields": _safe_numbers(attempt.get("schema_fields"), ("target_count", "retrieved_count", "matched_count", "recall", "precision")),
+            "sql_outcome": _safe_sql_outcome(attempt.get("sql_outcome")),
             "stage_metrics": _stages(_aggregate_attempt_stages(attempt.get("stages"))),
             **({"failure_attribution": _attribution(attempt.get("failure_attribution"))} if "failure_attribution" in attempt else {}),
         } for attempt in case.get("attempts", [])]
@@ -104,7 +117,8 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
         "request_budget": _pick(record.get("request_budget"), ("limit", "used", "exhausted")),
         "summary": {**(_pick(summary, ("total", "passed", "completion", "safety", "process", "pass3")) or {}),
                     "metrics": _metrics(summary.get("metrics")),
-                    "schema_fields": _pick(summary.get("schema_fields"), ("labeled_tasks", "unlabeled_tasks", "macro_recall", "macro_precision")),
+                    "schema_fields": _safe_numbers(summary.get("schema_fields"), ("labeled_tasks", "unlabeled_tasks", "macro_recall", "macro_precision")),
+                    "sql_outcome": _safe_numbers(summary.get("sql_outcome"), ("attempts", "executed", "result_correct")),
                     "stage_metrics": _stages(summary.get("stage_metrics")),
                     **({"failure_summary": [{"kind": item["kind"], "stage": item.get("stage") if item.get("stage") in STAGE_NAMES else None, "count": item["count"]} for item in (summary.get("failure_summary") or []) if item.get("kind") in {"stage", "grader", "runner"} and type(item.get("count")) is int]} if "failure_summary" in summary else {})},
         "cases": cases,
