@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.evaluation import EvaluationService, _fixture_hash, aggregate_metrics, aggregate_stages, attribute_failure, attempt_metrics, combine_attempts, compare_records, failure_summary, fixture_engine, grade, oracle_sql, task_catalog
+from app.evaluation import EvaluationService, _fixture_hash, _rows_equal, aggregate_metrics, aggregate_stages, attribute_failure, attempt_metrics, combine_attempts, compare_records, failure_summary, fixture_engine, grade, oracle_sql, task_catalog
 from app.eval_provenance import provenance_snapshot
 from app.eval_export import export_report
 from app.model_client import ModelRequestBudgetExceeded
@@ -74,6 +74,21 @@ class EvaluationTest(unittest.TestCase):
                 before = fixture_hash("base", "ecommerce_ops")
                 csv_file.write_text("order_id\n2\n", encoding="utf-8")
                 self.assertNotEqual(before, fixture_hash("base", "ecommerce_ops"))
+
+    def test_ecommerce_draft_data_distinguishes_three_common_errors(self) -> None:
+        service = EvaluationService()
+        wrong_sql = {
+            "commerce.order_status_count": "SELECT order_status, COUNT(order_id) AS order_count FROM orders WHERE order_status <> 'refunded' GROUP BY order_status",
+            "commerce.august_completed_sales": "SELECT region, ROUND(SUM(paid_amount), 2) AS sales FROM orders WHERE order_status = 'completed' GROUP BY region",
+            "commerce.store_type_sales": "SELECT s.store_type, ROUND(SUM(o.paid_amount), 2) AS sales FROM orders o JOIN stores s ON o.region = s.region WHERE o.order_status = 'completed' AND o.ordered_at >= TIMESTAMP '2026-08-01 00:00:00' AND o.ordered_at < TIMESTAMP '2026-09-01 00:00:00' GROUP BY s.store_type",
+        }
+        for task_id, sql in wrong_sql.items():
+            with self.subTest(task_id=task_id):
+                task = next(task for task in service.catalog()["tasks"] if task["id"] == task_id)
+                expected = service._oracle(task)
+                actual = service.engine.execute("ecommerce_ops", sql)
+                self.assertTrue(actual.success, actual.error)
+                self.assertFalse(_rows_equal(expected, actual.rows))
 
     def test_candidate_sql_check_requires_approved_query_and_admin(self) -> None:
         task_id = "mock.region_sales"
