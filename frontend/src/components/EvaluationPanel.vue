@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { api } from "../api"
-import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalCandidateSqlCheck, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
+import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalCandidateSqlBatch, EvalCandidateSqlCheck, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
 
 const tasks = ref<EvalTask[]>([])
 const benchmarkReadiness = ref<EvalBenchmarkReadiness | null>(null)
@@ -12,6 +12,10 @@ const candidateCheck = ref<EvalCandidateSqlCheck | null>(null)
 const candidateBusy = ref(false)
 const candidateError = ref("")
 const candidateTaskOptions = computed(() => tasks.value.filter(task => task.route === "database_query" && !task.kind && reviews.value?.tasks.some(item => item.task_id === task.id && item.status === "approved")))
+const batchJson = ref("")
+const batchReport = ref<EvalCandidateSqlBatch | null>(null)
+const batchBusy = ref(false)
+const batchError = ref("")
 const selected = ref<string[]>([])
 const runs = ref<EvalRunSummary[]>([])
 const current = ref<EvalRun | null>(null)
@@ -112,6 +116,41 @@ async function checkCandidateSql() {
   try { candidateCheck.value = await api.evalCheckCandidateSql(candidateTaskId.value, candidateSql.value, candidateFixture.value) }
   catch (caught) { candidateError.value = String(caught) }
   finally { candidateBusy.value = false }
+}
+
+async function loadBatchFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  batchError.value = ""
+  if (file.size > 256_000) { batchError.value = "JSON 文件不得超过 256 KB"; return }
+  batchJson.value = await file.text()
+  batchReport.value = null
+}
+
+async function checkCandidateBatch() {
+  batchError.value = ""
+  batchReport.value = null
+  let payload: { fixture_id: EvalFixtureId; candidates: { task_id: string; sql: string }[] }
+  try {
+    payload = JSON.parse(batchJson.value)
+    if (!auditFixtures.some(item => item.id === payload.fixture_id) || !Array.isArray(payload.candidates)) throw new Error("JSON 需包含 fixture_id 和 candidates 数组")
+  } catch (caught) { batchError.value = `输入格式错误：${String(caught)}`; return }
+  batchBusy.value = true
+  try { batchReport.value = await api.evalCheckCandidateBatch(payload.candidates, payload.fixture_id) }
+  catch (caught) { batchError.value = String(caught) }
+  finally { batchBusy.value = false }
+}
+
+function downloadBatchReport() {
+  if (!batchReport.value) return
+  const report = batchReport.value
+  const safe = { task_version: report.task_version, fixture_id: report.fixture_id, fixture_hash: report.fixture_hash, submission_hash: report.submission_hash, summary: report.summary, cases: report.cases.map(({ task_id, execution_success, result_correct, passed, checks, candidate_row_count, expected_row_count }) => ({ task_id, execution_success, result_correct, passed, checks, candidate_row_count, expected_row_count })) }
+  const url = URL.createObjectURL(new Blob([JSON.stringify(safe, null, 2)], { type: "application/json" }))
+  const link = document.createElement("a")
+  link.href = url
+  link.download = `askdata-candidate-batch-${report.submission_hash}.json`
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function prepareSmokeRun() {
@@ -535,6 +574,20 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <p class="eval-meta">判分检查：<span v-for="(passed, name) in candidateCheck.grade.checks" :key="name">{{ name }} {{ passed ? '通过' : '未通过' }}　</span></p>
         <details><summary>查看候选结果前 10 行（执行器返回 {{ candidateCheck.candidate_row_count }} 行，最多 200 行）</summary><pre>{{ JSON.stringify(candidateCheck.candidate_preview, null, 2) }}</pre></details>
         <details><summary>查看标准结果前 10 行（执行器返回 {{ candidateCheck.expected_row_count }} 行，最多 200 行）</summary><pre>{{ JSON.stringify(candidateCheck.expected_preview, null, 2) }}</pre></details>
+      </div>
+    </section>
+    <section class="eval-card eval-history">
+      <h2>10 · 批量候选 SQL 验证</h2>
+      <p>一次提交 1–20 道已审核普通 SQL 题；可粘贴 JSON 或选择本地文件。无模型调用，下载报告不含 SQL 和结果行。</p>
+      <label class="eval-option">选择 JSON 文件 <input type="file" accept=".json,application/json" @change="loadBatchFile"></label>
+      <label class="eval-review-note">批量输入<textarea v-model="batchJson" rows="7" placeholder='{"fixture_id":"edge_v3","candidates":[{"task_id":"mock.region_sales","sql":"SELECT ..."}]}'></textarea></label>
+      <button class="eval-secondary" :disabled="batchBusy || !batchJson.trim()" @click="checkCandidateBatch">{{ batchBusy ? '正在验证…' : '验证批量 SQL' }}</button>
+      <p v-if="batchError" class="eval-error">{{ batchError }}</p>
+      <div v-if="batchReport" class="eval-result">
+        <p>已提交 {{ batchReport.summary.submitted }} 题 · 执行成功 {{ batchReport.summary.executed }} · 结果正确 {{ batchReport.summary.result_correct }} · 全项通过 {{ batchReport.summary.passed }}</p>
+        <p class="eval-meta">任务集 v{{ batchReport.task_version }} · {{ batchReport.fixture_id }} · 数据指纹 {{ batchReport.fixture_hash }} · 提交指纹 {{ batchReport.submission_hash }}</p>
+        <button class="eval-secondary" @click="downloadBatchReport">下载 JSON 汇总</button>
+        <p v-for="item in batchReport.cases" :key="item.task_id" class="eval-meta">{{ item.task_id }}：执行 {{ item.execution_success ? '成功' : '失败' }} · 结果 {{ item.result_correct ? '正确' : '不匹配' }} · 全项 {{ item.passed ? '通过' : '未通过' }}<span v-if="item.execution_error" class="eval-error"> · {{ item.execution_error }}</span></p>
       </div>
     </section>
   </div>

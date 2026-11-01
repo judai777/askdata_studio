@@ -50,6 +50,16 @@ class EvalCandidateSqlRequest(BaseModel):
     fixture_id: str = "base"
 
 
+class EvalCandidateSqlItem(BaseModel):
+    task_id: str
+    sql: str
+
+
+class EvalCandidateSqlBatchRequest(BaseModel):
+    fixture_id: str = "base"
+    candidates: list[EvalCandidateSqlItem]
+
+
 class EvalLabelRequest(BaseModel):
     fingerprint: str
     labels: dict[str, str]
@@ -98,6 +108,14 @@ def eval_audit(_: AuthUser = Depends(require_admin)) -> dict:
 def eval_candidate_sql_check(payload: EvalCandidateSqlRequest, _: AuthUser = Depends(require_admin)) -> dict:
     try:
         return evaluation_service.check_candidate_sql(payload.task_id, payload.sql, payload.fixture_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.post("/eval/candidate-sql/batch")
+def eval_candidate_sql_batch(payload: EvalCandidateSqlBatchRequest, _: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return evaluation_service.check_candidate_batch([item.model_dump() for item in payload.candidates], payload.fixture_id)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

@@ -20,6 +20,36 @@ from app.main import app
 
 
 class EvaluationTest(unittest.TestCase):
+    def test_candidate_batch_reports_mixed_results_without_sql(self) -> None:
+        service = EvaluationService()
+        ids = ["mock.region_sales", "metric.paid_vs_list"]
+        with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.REVIEW_RECORD_FILE", Path(directory) / "reviews.json"):
+            fingerprints = {item["task_id"]: item["fingerprint"] for item in service.reviews()["tasks"]}
+            for task_id in ids:
+                service.submit_review(task_id, "approved", "核对口径", fingerprints[task_id], "demo_admin")
+            candidates = [{"task_id": ids[0], "sql": oracle_sql(ids[0])}, {"task_id": ids[1], "sql": "SELECT region, 0 AS sales FROM orders_current GROUP BY region"}]
+            report = service.check_candidate_batch(candidates, "edge_v3")
+            self.assertEqual(report["summary"], {"submitted": 2, "executed": 2, "result_correct": 1, "passed": 1})
+            self.assertEqual(len(report["submission_hash"]), 16)
+            self.assertNotIn("SELECT", json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "不可重复"):
+                service.check_candidate_batch([candidates[0], candidates[0]])
+            with self.assertRaisesRegex(ValueError, "1–20"):
+                service.check_candidate_batch(candidates * 11)
+            with self.assertRaisesRegex(ValueError, "人工审核"):
+                service.check_candidate_batch([{"task_id": "mock.customer_level", "sql": oracle_sql("mock.customer_level")}])
+            write = service.check_candidate_batch([{"task_id": ids[0], "sql": "DELETE FROM orders_current"}])
+            self.assertEqual(write["summary"], {"submitted": 1, "executed": 0, "result_correct": 0, "passed": 0})
+            with TestClient(app) as client:
+                admin = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"}).json()["access_token"]
+                sales = client.post("/api/auth/login", json={"username": "sales", "password": "sales123"}).json()["access_token"]
+                payload = {"fixture_id": "edge_v3", "candidates": candidates}
+                allowed = client.post("/api/eval/candidate-sql/batch", headers={"Authorization": f"Bearer {admin}"}, json=payload)
+                self.assertEqual(allowed.status_code, 200)
+                self.assertEqual(allowed.json()["summary"], report["summary"])
+                denied = client.post("/api/eval/candidate-sql/batch", headers={"Authorization": f"Bearer {sales}"}, json=payload)
+                self.assertEqual(denied.status_code, 403)
+
     def test_candidate_sql_check_requires_approved_query_and_admin(self) -> None:
         task_id = "mock.region_sales"
         service = EvaluationService()

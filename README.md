@@ -147,3 +147,5 @@ P2 失败归因已完成：失败试验给出主要排查位置，区分工作�
 离线回归门槛不需要本地模型或远程 API 密钥。在 `backend` 目录运行 `python seed_demo_data.py` 准备固定 CSV，运行 `python -m unittest discover -s tests -q`，再运行 `python -m app.eval_gate`。门槛核对任务、标准答案、错误 SQL 和四套 fixture 的版本/指纹，并要求 `edge_v3` 识别全部已登记错误 SQL、所有 fixture 无无效 SQL。题目或数据有意变更时，先核对审计结果，再显式更新 `backend/evals/offline_gate.json`；门槛不会自动更新基线。GitHub Actions 同步执行这些步骤和前端构建。详见[第十六阶段决策记录](docs/evaluation-v16-decisions.md)与[第二十七阶段验收](docs/evaluation-v27-validation.md)。
 
 运行记录保存在 `backend/data/eval_runs/`（被 Git 忽略）。从[首版工程阶段验收与两幅流程图](docs/evaluation-milestone-1.md)开始体验；详细结构见[评测结构与流程](docs/evaluation-architecture.md)，决策历程见[评测决策记录](docs/evaluation-decisions.md)。
+
+管理员评测台的“批量候选 SQL 验证”可导入或粘贴 `{"fixture_id":"edge_v3","candidates":[{"task_id":"mock.region_sales","sql":"SELECT ..."}]}`，一次验证 1–20 道已审核的普通 SQL 题。它使用固定数据集和标准答案判分，不调用模型；页面展示逐题结果，下载的 JSON 汇总不含 SQL、结果行或错误正文。详见[第三十八阶段决策](docs/evaluation-v38-decisions.md)。
