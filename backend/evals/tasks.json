@@ -1,5 +1,5 @@
 {
-  "version": "5.2",
+  "version": "5.3",
   "tasks": [
     {"id":"mock.region_sales","category":"单表聚合","query":"按地区统计已支付订单销售额","database":"askdata_mock","route":"database_query","required_tables":["orders_current"]},
     {"id":"mock.customer_level","category":"多表关联","query":"按客户等级统计已支付订单销售额","database":"askdata_mock","route":"database_query","required_tables":["orders_current","customers"]},
@@ -14,6 +14,9 @@
     {"id":"time.history_july","category":"时间边界","query":"统计2026年7月历史订单中已支付订单的实付销售额","database":"askdata_mock","route":"database_query","required_tables":["orders_history"],"required_metric_fields":["paid_amount"],"required_time_fields":["order_date"]},
     {"id":"join.customer_orders","category":"多表关联","query":"按客户等级统计2026年8月已支付订单的订单数和实付销售额","database":"askdata_mock","route":"database_query","required_tables":["orders_current","customers"],"required_metric_fields":["order_id","paid_amount"],"required_time_fields":["order_date"]},
     {"id":"grain.unique_customers","category":"聚合粒度","query":"按地区统计2026年8月已支付订单的去重客户数","database":"askdata_mock","route":"database_query","required_tables":["orders_current"],"required_metric_fields":["customer_id"],"required_time_fields":["order_date"]},
-    {"id":"time.july_august","category":"跨表时间口径","query":"分别统计2026年7月历史订单和8月当前订单的已支付实付销售额，按月份输出","database":"askdata_mock","route":"database_query","required_tables":["orders_history","orders_current"],"required_metric_fields":["paid_amount"],"required_time_fields":["order_date"]}
+    {"id":"time.july_august","category":"跨表时间口径","query":"分别统计2026年7月历史订单和8月当前订单的已支付实付销售额，按月份输出","database":"askdata_mock","route":"database_query","required_tables":["orders_history","orders_current"],"required_metric_fields":["paid_amount"],"required_time_fields":["order_date"]},
+    {"id":"commerce.order_status_count","split":"development","difficulty":"simple","family":"order_status_distribution","category":"目标域·状态分布","query":"统计商城所有订单在各订单状态下的订单数","database":"ecommerce_ops","route":"database_query","required_tables":["orders"],"required_metric_fields":["order_id"]},
+    {"id":"commerce.august_completed_sales","split":"development","difficulty":"simple","family":"monthly_paid_region","category":"目标域·时间金额口径","query":"按订单所属地区统计2026年8月状态为 completed 的订单实付金额","database":"ecommerce_ops","route":"database_query","required_tables":["orders"],"required_metric_fields":["paid_amount"],"required_time_fields":["ordered_at"]},
+    {"id":"commerce.store_type_sales","split":"development","difficulty":"medium","family":"store_type_join_sales","category":"目标域·多表关联","query":"按店铺类型统计2026年8月状态为 completed 的订单实付金额；订单通过 store_id 关联店铺","database":"ecommerce_ops","route":"database_query","required_tables":["orders","stores"],"required_metric_fields":["paid_amount"],"required_time_fields":["ordered_at"]}
   ]
 }

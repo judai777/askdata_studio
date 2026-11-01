@@ -38,7 +38,7 @@ class SchemaMetricTests(unittest.TestCase):
         resumed = {"resumed": {"retrieval": {"hits": [{"database_id": "askdata_mock", "table_id": "orders_current", "field_name": "region"}]}}}
         self.assertEqual(score_attempt_fields(target, resumed)["recall"], 1.0)
         path = Path(__file__).parents[1] / "evals" / "field_targets.json"
-        labels, fingerprint = load_field_targets(path, "5.2")
+        labels, fingerprint = load_field_targets(path, "5.3")
         self.assertEqual(len(labels), 12)
         self.assertEqual(len(fingerprint), 16)
         self.assertEqual(load_field_targets(path, "different")[0], {})

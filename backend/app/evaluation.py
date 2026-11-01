@@ -66,17 +66,33 @@ def _oracle_hash() -> str:
     return hashlib.sha256(ORACLE_FILE.read_bytes()).hexdigest()[:16]
 
 
-def _fixture_hash(fixture_id: str = "base") -> str:
+def _fixture_hash(fixture_id: str = "base", database: str = "askdata_mock") -> str:
     if fixture_id not in FIXTURE_FILES:
         raise ValueError("未知评测 fixture")
+    if database == "ecommerce_ops" and fixture_id != "base":
+        raise ValueError("ecommerce_ops 题目目前只支持 base 数据集")
+    if database not in {"askdata_mock", "ecommerce_ops"}:
+        raise ValueError("未知评测数据库")
     digest = hashlib.sha256()
     digest.update(fixture_id.encode())
-    for path in sorted((BASE_DIR / "data" / "databases" / "askdata_mock").glob("*.csv")):
+    if database != "askdata_mock":
+        digest.update(database.encode())
+    paths = sorted((BASE_DIR / "data" / "databases" / database).glob("*.csv"))
+    if not paths:
+        raise ValueError(f"缺少评测数据库文件：{database}")
+    for path in paths:
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
-    for overlay_file in FIXTURE_FILES[fixture_id]:
+    for overlay_file in FIXTURE_FILES[fixture_id] if database == "askdata_mock" else ():
         digest.update(overlay_file.read_bytes())
     return digest.hexdigest()[:16]
+
+
+def _task_fixture_hash(tasks: list[dict[str, Any]], fixture_id: str) -> str:
+    databases = {task.get("database", "askdata_mock") for task in tasks}
+    if len(databases) != 1:
+        raise ValueError("一次评测只支持同一个数据库的题目")
+    return _fixture_hash(fixture_id, databases.pop())
 
 
 @contextmanager
@@ -357,12 +373,13 @@ class EvaluationService:
             raise ValueError("审核说明必须覆盖全部评测任务")
         oracles = json.loads(ORACLE_FILE.read_text(encoding="utf-8"))
         fixture_hashes = {name: _fixture_hash(name) for name in FIXTURE_FILES}
+        ecommerce_hash = _fixture_hash("base", "ecommerce_ops") if any(task.get("database") == "ecommerce_ops" for task in tasks) else None
         records = self._review_records()
         items = []
         for task in tasks:
             task_id = task["id"]
             spec = specs["tasks"][task_id]
-            payload = {"task": task, "oracle": oracles.get(task_id), "spec": spec, "fixtures": fixture_hashes}
+            payload = {"task": task, "oracle": oracles.get(task_id), "spec": spec, "fixtures": {"base": ecommerce_hash} if task.get("database") == "ecommerce_ops" else fixture_hashes}
             fingerprint = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
             history = records.get(task_id, [])
             latest = history[-1] if history else None
@@ -396,16 +413,17 @@ class EvaluationService:
         sql = oracle_sql(task_id)
         expected = {}
         if sql and task.get("kind") != "security_probe":
-            for fixture_id in FIXTURE_FILES:
+            for fixture_id in ("base",) if task.get("database") == "ecommerce_ops" else FIXTURE_FILES:
                 with fixture_engine(fixture_id) as engine:
                     expected[fixture_id] = self._oracle(task, engine)
         return {**item, "task": task, "oracle_sql": sql, "expected_rows": expected, "history": self._review_records().get(task_id, [])}
 
     def check_candidate_sql(self, task_id: str, sql: str, fixture_id: str = "base") -> dict[str, Any]:
         task = self._candidate_task(task_id, sql)
+        fixture_hash = _task_fixture_hash([task], fixture_id)
         with fixture_engine(fixture_id) as engine:
             result = self._check_candidate_on_engine(task, sql, engine)
-        return {"task_id": task_id, "fixture_id": fixture_id, "fixture_hash": _fixture_hash(fixture_id), **result}
+        return {"task_id": task_id, "fixture_id": fixture_id, "fixture_hash": fixture_hash, **result}
 
     def _candidate_task(self, task_id: str, sql: str) -> dict[str, Any]:
         if not isinstance(sql, str) or not sql.strip() or len(sql) > 10_000:
@@ -435,13 +453,14 @@ class EvaluationService:
         if len(task_ids) != len(candidates) or any(not isinstance(task_id, str) for task_id in task_ids) or len(set(task_ids)) != len(task_ids):
             raise ValueError("候选题目 ID 不可重复且每项必须是对象")
         tasks = [self._candidate_task(item["task_id"], item.get("sql")) for item in candidates]
+        fixture_hash = _task_fixture_hash(tasks, fixture_id)
         cases = []
         with fixture_engine(fixture_id) as engine:
             for task, item in zip(tasks, candidates):
                 result = self._check_candidate_on_engine(task, item["sql"], engine)
                 cases.append({"task_id": task["id"], "execution_success": result["execution_success"], "execution_error": result["execution_error"], "result_correct": result["result_correct"], "passed": result["grade"]["passed"], "checks": result["grade"]["checks"], "candidate_row_count": result["candidate_row_count"], "expected_row_count": result["expected_row_count"]})
         digest = hashlib.sha256(json.dumps({"fixture_id": fixture_id, "candidates": candidates}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
-        return {"task_version": self.catalog()["version"], "fixture_id": fixture_id, "fixture_hash": _fixture_hash(fixture_id), "submission_hash": digest, "summary": {"submitted": len(cases), "executed": sum(case["execution_success"] for case in cases), "result_correct": sum(case["result_correct"] for case in cases), "passed": sum(case["passed"] for case in cases)}, "cases": cases}
+        return {"task_version": self.catalog()["version"], "fixture_id": fixture_id, "fixture_hash": fixture_hash, "submission_hash": digest, "summary": {"submitted": len(cases), "executed": sum(case["execution_success"] for case in cases), "result_correct": sum(case["result_correct"] for case in cases), "passed": sum(case["passed"] for case in cases)}, "cases": cases}
 
     def submit_review(self, task_id: str, decision: str, note: str, fingerprint: str, reviewer: str) -> dict[str, Any]:
         if decision not in {"approved", "rejected"} or not note.strip():
@@ -539,7 +558,7 @@ class EvaluationService:
         indexed = self._validate(mode, task_ids, trials)
         request_limit = self._request_limit(mode, request_limit)
         model_config = model_config or resolve_model(mode, model)
-        fixture_hash = _fixture_hash(fixture_id)
+        fixture_hash = _task_fixture_hash([indexed[task_id] for task_id in task_ids], fixture_id)
         check_service = self._live_service(model_config) if model_config else None
         if check_service and not check_service.model_client.enabled:
             raise ValueError("实时评测需要配置 LLM_API_KEY")
@@ -571,7 +590,8 @@ class EvaluationService:
         budget = baseline.get("request_budget") or {}
         if not isinstance(task_ids, list) or not task_ids or type(budget.get("limit")) is not int or not baseline.get("grader_hash"):
             raise ValueError("旧运行缺少完整实验条件，请重新创建基线")
-        if baseline.get("task_version") != self.catalog()["version"] or baseline.get("fixture_hash") != _fixture_hash(baseline.get("fixture_id", "base")) or baseline.get("oracle_hash") != _oracle_hash() or baseline["grader_hash"] != grader_hash():
+        indexed = {task["id"]: task for task in self.catalog()["tasks"]}
+        if baseline.get("task_version") != self.catalog()["version"] or baseline.get("fixture_hash") != _task_fixture_hash([indexed[task_id] for task_id in task_ids], baseline.get("fixture_id", "base")) or baseline.get("oracle_hash") != _oracle_hash() or baseline["grader_hash"] != grader_hash():
             raise ValueError("任务、数据、标准答案或判分器已变化，请重新创建基线")
         if baseline.get("field_targets_hash") and baseline["field_targets_hash"] != load_field_targets(FIELD_TARGET_FILE, self.catalog()["version"])[1]:
             raise ValueError("目标字段标签已变化，请重新创建基线")
@@ -636,6 +656,8 @@ class EvaluationService:
             temporary.unlink(missing_ok=True)
 
     def run(self, mode: str, task_ids: list[str], trials: int = 1, *, run_id: str | None = None, fixture_id: str = "base", cancel_event: Event | None = None, request_limit: int | None = None, model: str | None = None, model_config: Settings | None = None, baseline_run_id: str | None = None) -> dict[str, Any]:
+        indexed = self._validate(mode, task_ids, trials)
+        _task_fixture_hash([indexed[task_id] for task_id in task_ids], fixture_id)
         with fixture_engine(fixture_id) as engine:
             return self._run_on_engine(mode, task_ids, trials, engine, run_id=run_id, fixture_id=fixture_id, cancel_event=cancel_event, request_limit=request_limit, model=model, model_config=model_config, baseline_run_id=baseline_run_id)
 
@@ -655,7 +677,7 @@ class EvaluationService:
             service.workflow.database_engine = engine
         run_id = run_id or uuid.uuid4().hex[:12]
         total = sum(1 if indexed[task_id].get("kind") == "security_probe" else trials for task_id in task_ids)
-        record: dict[str, Any] = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "running", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": catalog["version"], "fixture_hash": _fixture_hash(fixture_id), "oracle_hash": _oracle_hash(), "provenance": provenance_snapshot(mode, service.config if service else None), "review": self.review_summary(task_ids), "model": service.config.llm_model if service else "offline-demo", "started_at": datetime.now(timezone.utc).isoformat(), "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
+        record: dict[str, Any] = {"id": run_id, "mode": mode, "trials": trials, "fixture_id": fixture_id, "status": "running", "task_count": len(task_ids), "model_task_count": sum(indexed[t].get("kind") != "security_probe" for t in task_ids), "task_version": catalog["version"], "fixture_hash": _task_fixture_hash([indexed[task_id] for task_id in task_ids], fixture_id), "oracle_hash": _oracle_hash(), "provenance": provenance_snapshot(mode, service.config if service else None), "review": self.review_summary(task_ids), "model": service.config.llm_model if service else "offline-demo", "started_at": datetime.now(timezone.utc).isoformat(), "summary": {"total": len(task_ids), "passed": 0, "completion": 0, "safety": 0, "process": 0, "pass3": None}, "progress": {"completed_attempts": 0, "total_attempts": total, "current_task": None}, "cases": []}
         record["request_budget"] = {"limit": request_limit, "used": 0, "exhausted": False} if request_limit else None
         record["grader_hash"] = grader_hash()
         if run_id and (RUN_DIR / f"{run_id}.json").exists():
@@ -783,7 +805,8 @@ class EvaluationService:
                 raise ValueError("运行未完成，不能重放")
             indexed = {t["id"]: t for t in self.catalog()["tasks"]}
             fixture_id = record.get("fixture_id", "base")
-            if record["fixture_hash"] != _fixture_hash(fixture_id) or record["task_version"] != self.catalog()["version"] or record.get("oracle_hash") != _oracle_hash():
+            record_tasks = [indexed[task_id] for task_id in record.get("task_ids", [case["task_id"] for case in record["cases"]])]
+            if record["fixture_hash"] != _task_fixture_hash(record_tasks, fixture_id) or record["task_version"] != self.catalog()["version"] or record.get("oracle_hash") != _oracle_hash():
                 raise ValueError("任务、标准答案或数据版本已改变，不能重放")
             with fixture_engine(fixture_id) as engine:
                 for case in record["cases"]:

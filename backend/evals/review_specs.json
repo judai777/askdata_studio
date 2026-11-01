@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "tasks": {
     "mock.region_sales": {"intent": "地区维度的已支付实付销售额", "result": "每地区一行，汇总 paid_amount；未支付订单不计入。", "process": "只读查询 orders_current，按 region 分组。", "pitfall": "漏状态过滤在 base 可能不改变结果，须检查 edge_v1。"},
     "mock.customer_level": {"intent": "客户等级维度的已支付实付销售额", "result": "按 customer_level 汇总 paid_amount，客户与订单通过 customer_id 关联。", "process": "只读查询 orders_current 与 customers。", "pitfall": "按地区代替客户 ID 关联会产生错误归属或重复。"},
@@ -14,6 +14,9 @@
     "time.history_july": {"intent": "7 月历史订单已支付实付销售额", "result": "只汇总 orders_history 中 7 月已支付 paid_amount。", "process": "显式使用历史表和 7 月起止日期。", "pitfall": "边界数据包含 7 月末支付与月中退款订单。"},
     "join.customer_orders": {"intent": "8 月按客户等级统计订单数和实付销售额", "result": "每等级返回去重 order_id 数量和已支付 paid_amount 总额。", "process": "orders_current 按 customer_id 关联 customers，并过滤 8 月及已支付状态。", "pitfall": "地区关联会重复订单；COUNT(*) 与去重订单数需按 JOIN 粒度核对。"},
     "grain.unique_customers": {"intent": "8 月各地区去重已支付客户数", "result": "每地区 COUNT(DISTINCT customer_id)，同一客户多笔订单只计一次。", "process": "只读查询 orders_current，过滤 8 月及已支付状态。", "pitfall": "COUNT(*) 或 COUNT(order_id) 会把重复购买客户计多次。"},
-    "time.july_august": {"intent": "分别输出 7 月历史与 8 月当前已支付实付销售额", "result": "恰好两个月份行，7 月来自 orders_history，8 月来自 orders_current。", "process": "分别过滤月份和状态，再按月份汇总或 UNION ALL。", "pitfall": "只查当前表会漏历史月份；跨表合并不能重复月份或混用时间条件。"}
+    "time.july_august": {"intent": "分别输出 7 月历史与 8 月当前已支付实付销售额", "result": "恰好两个月份行，7 月来自 orders_history，8 月来自 orders_current。", "process": "分别过滤月份和状态，再按月份汇总或 UNION ALL。", "pitfall": "只查当前表会漏历史月份；跨表合并不能重复月份或混用时间条件。"},
+    "commerce.order_status_count": {"intent": "目标域订单状态分布", "result": "每个 order_status 一行，按 order_id 计数，包含未支付与退款状态。", "process": "只读查询 ecommerce_ops.orders，不过滤状态。", "pitfall": "漏掉某一状态或把明细行当作去重用户数。"},
+    "commerce.august_completed_sales": {"intent": "目标域 8 月完成订单的地区实付金额", "result": "按 orders.region 分组，只汇总 2026 年 8 月且 order_status 为 completed 的 paid_amount。", "process": "对 ordered_at 使用左闭右开月份边界。", "pitfall": "不能把 paid、shipped、refunded 或其他月份混入，也不能错用 payable_amount。"},
+    "commerce.store_type_sales": {"intent": "目标域店铺类型维度的 8 月完成订单实付金额", "result": "订单按 store_id 关联 stores，每种 store_type 一行，汇总符合时间和状态条件的 orders.paid_amount。", "process": "使用 orders 与 stores 的 store_id 关联，并按店铺类型分组。", "pitfall": "按地区关联会造成重复，或将店铺地区误当店铺类型。"}
   }
 }

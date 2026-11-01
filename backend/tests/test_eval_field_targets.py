@@ -20,7 +20,7 @@ class FieldTargetDraftTests(unittest.TestCase):
         oracles = json.loads(ORACLE_FILE.read_text(encoding="utf-8"))
         self.assertEqual((draft["status"], draft["task_version"]), ("draft", catalog["version"]))
         self.assertEqual((approved["status"], approved["task_version"]), ("approved", catalog["version"]))
-        self.assertEqual(approved["targets"], draft["targets"])
+        self.assertEqual(approved["targets"], {task_id: draft["targets"][task_id] for task_id in approved["targets"]})
         expected_ids = {task["id"] for task in catalog["tasks"] if task.get("route") == "database_query" and task.get("kind") != "security_probe"}
         self.assertEqual(set(draft["targets"]), expected_ids)
         for task_id, labels in draft["targets"].items():

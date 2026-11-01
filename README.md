@@ -149,3 +149,5 @@ P2 失败归因已完成：失败试验给出主要排查位置，区分工作�
 运行记录保存在 `backend/data/eval_runs/`（被 Git 忽略）。从[首版工程阶段验收与两幅流程图](docs/evaluation-milestone-1.md)开始体验；详细结构见[评测结构与流程](docs/evaluation-architecture.md)，决策历程见[评测决策记录](docs/evaluation-decisions.md)。
 
 管理员评测台的“批量候选 SQL 验证”可导入或粘贴 `{"fixture_id":"edge_v3","candidates":[{"task_id":"mock.region_sales","sql":"SELECT ..."}]}`，一次验证 1–20 道已审核的普通 SQL 题。它使用固定数据集和标准答案判分，不调用模型；页面展示逐题结果，下载的 JSON 汇总不含 SQL、结果行或错误正文。详见[第三十八阶段决策](docs/evaluation-v38-decisions.md)。
+
+目标域 `ecommerce_ops` 已有 3 道开发题草稿，可在管理员评测台逐题查看标准 SQL 和 base 结果，并进入人工审核。它们尚不构成模型成绩；目标域当前只支持 base 数据集，同次运行只选同一数据库。数据指纹覆盖目标域 CSV 内容。详见[第三十九阶段决策](docs/evaluation-v39-decisions.md)。

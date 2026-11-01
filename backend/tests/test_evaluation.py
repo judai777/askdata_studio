@@ -50,6 +50,31 @@ class EvaluationTest(unittest.TestCase):
                 denied = client.post("/api/eval/candidate-sql/batch", headers={"Authorization": f"Bearer {sales}"}, json=payload)
                 self.assertEqual(denied.status_code, 403)
 
+    def test_ecommerce_development_drafts_use_base_and_own_data_hash(self) -> None:
+        service = EvaluationService()
+        ids = ["commerce.order_status_count", "commerce.august_completed_sales", "commerce.store_type_sales"]
+        self.assertEqual(service.benchmark_readiness()["target"]["development"], 3)
+        for task_id in ids:
+            preview = service.review_preview(task_id)
+            self.assertEqual(preview["status"], "pending")
+            self.assertEqual(set(preview["expected_rows"]), {"base"})
+            self.assertTrue(preview["expected_rows"]["base"])
+        with self.assertRaisesRegex(ValueError, "只支持 base"):
+            service.run("demo", ids, fixture_id="edge_v3")
+        with self.assertRaisesRegex(ValueError, "同一个数据库"):
+            service.run("demo", [ids[0], "mock.region_sales"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "data" / "databases" / "ecommerce_ops"
+            folder.mkdir(parents=True)
+            csv_file = folder / "orders.csv"
+            csv_file.write_text("order_id\n1\n", encoding="utf-8")
+            with patch("app.evaluation.BASE_DIR", root):
+                from app.evaluation import _fixture_hash as fixture_hash
+                before = fixture_hash("base", "ecommerce_ops")
+                csv_file.write_text("order_id\n2\n", encoding="utf-8")
+                self.assertNotEqual(before, fixture_hash("base", "ecommerce_ops"))
+
     def test_candidate_sql_check_requires_approved_query_and_admin(self) -> None:
         task_id = "mock.region_sales"
         service = EvaluationService()
@@ -289,10 +314,10 @@ class EvaluationTest(unittest.TestCase):
             spec_path = Path(directory) / "specs.json"
             with patch("app.evaluation.REVIEW_RECORD_FILE", record_path):
                 initial = service.reviews()
-                self.assertEqual(initial["counts"]["pending"], 14)
+                self.assertEqual(initial["counts"]["pending"], 17)
                 readiness = service.benchmark_readiness()
                 self.assertEqual(readiness["existing"], {"total": 14, "approved": 0, "sql_tasks": 12, "with_field_constraints": 9})
-                self.assertEqual(readiness["target"], {"database": "ecommerce_ops", "development": 0, "development_goal": 49, "holdout": 0, "holdout_goal": 381, "total_goal": 430})
+                self.assertEqual(readiness["target"], {"database": "ecommerce_ops", "development": 3, "development_goal": 49, "holdout": 0, "holdout_goal": 381, "total_goal": 430})
                 preview = service.review_preview(task_id)
                 self.assertTrue(preview["oracle_sql"])
                 self.assertEqual(set(preview["expected_rows"]), {"base", "edge_v1", "edge_v2", "edge_v3"})
@@ -422,7 +447,7 @@ class EvaluationTest(unittest.TestCase):
             headers = {"Authorization": f"Bearer {token}"}
             listed = client.get("/api/eval/reviews", headers=headers)
             self.assertEqual(listed.status_code, 200, listed.text)
-            self.assertEqual(listed.json()["counts"]["pending"], 14)
+            self.assertEqual(listed.json()["counts"]["pending"], 17)
             preview = client.get("/api/eval/reviews/join.customer_orders/preview", headers=headers)
             self.assertEqual(preview.status_code, 200, preview.text)
             self.assertIn("JOIN customers", preview.json()["oracle_sql"])

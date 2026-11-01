@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "status": "approved",
-  "task_version": "5.2",
+  "task_version": "5.3",
   "targets": {
     "mock.region_sales": [
       "askdata_mock.orders_current.region",

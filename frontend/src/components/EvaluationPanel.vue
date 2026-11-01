@@ -556,6 +556,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
     <section v-if="benchmarkReadiness" class="eval-card eval-history">
       <h2>8 · 430 题基准准备度</h2>
       <p>现有题属于 askdata_mock；目标基准使用 ecommerce_ops，两组题分别统计。</p>
+      <p class="eval-meta">目标域开发题目前是待人工审核的草稿，只支持原始 base 数据集；一次运行请选择同一数据库的题目。</p>
       <div class="eval-metrics"><span>现有题 {{ benchmarkReadiness.existing.total }}，已审核 {{ benchmarkReadiness.existing.approved }}</span><span>SQL 题显式字段约束 {{ benchmarkReadiness.existing.with_field_constraints }}/{{ benchmarkReadiness.existing.sql_tasks }}</span><span>目标域开发题 {{ benchmarkReadiness.target.development }}/{{ benchmarkReadiness.target.development_goal }}</span><span>目标域保留题 {{ benchmarkReadiness.target.holdout }}/{{ benchmarkReadiness.target.holdout_goal }}</span></div>
       <p class="eval-notice">目标总量 {{ benchmarkReadiness.target.total_goal }} 题。现有字段约束还不是完整的目标字段标注；这里显示准备进度，不代表模型成绩。</p>
     </section>

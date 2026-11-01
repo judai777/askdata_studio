@@ -1,9 +1,9 @@
 {
-  "task_version": "5.2",
-  "task_hash": "a66ddf85ba6b469c",
+  "task_version": "5.3",
+  "task_hash": "4b6c51f264badecb",
   "mutant_version": "1.4",
   "mutant_hash": "1ac96c470697efe3",
-  "oracle_hash": "fc7b68e4d4e7a0b9",
+  "oracle_hash": "cc051feeaf826120",
   "fixture_hashes": {
     "base": "360b511959d6a4c4",
     "edge_v1": "06d46c2bf6760fde",
