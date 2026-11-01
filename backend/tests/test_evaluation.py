@@ -54,11 +54,12 @@ class EvaluationTest(unittest.TestCase):
         service = EvaluationService()
         ids = ["commerce.order_status_count", "commerce.august_completed_sales", "commerce.store_type_sales"]
         self.assertEqual(service.benchmark_readiness()["target"]["development"], 3)
-        for task_id in ids:
-            preview = service.review_preview(task_id)
-            self.assertEqual(preview["status"], "pending")
-            self.assertEqual(set(preview["expected_rows"]), {"base"})
-            self.assertTrue(preview["expected_rows"]["base"])
+        with tempfile.TemporaryDirectory() as review_directory, patch("app.evaluation.REVIEW_RECORD_FILE", Path(review_directory) / "reviews.json"):
+            for task_id in ids:
+                preview = service.review_preview(task_id)
+                self.assertEqual(preview["status"], "pending")
+                self.assertEqual(set(preview["expected_rows"]), {"base"})
+                self.assertTrue(preview["expected_rows"]["base"])
         with self.assertRaisesRegex(ValueError, "只支持 base"):
             service.run("demo", ids, fixture_id="edge_v3")
         with self.assertRaisesRegex(ValueError, "同一个数据库"):

@@ -39,7 +39,7 @@ class SchemaMetricTests(unittest.TestCase):
         self.assertEqual(score_attempt_fields(target, resumed)["recall"], 1.0)
         path = Path(__file__).parents[1] / "evals" / "field_targets.json"
         labels, fingerprint = load_field_targets(path, "5.3")
-        self.assertEqual(len(labels), 12)
+        self.assertEqual(len(labels), 15)
         self.assertEqual(len(fingerprint), 16)
         self.assertEqual(load_field_targets(path, "different")[0], {})
 

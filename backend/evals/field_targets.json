@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "status": "approved",
   "task_version": "5.3",
   "targets": {
@@ -79,6 +79,24 @@
       "askdata_mock.orders_current.paid_amount",
       "askdata_mock.orders_current.status",
       "askdata_mock.orders_current.order_date"
+    ],
+    "commerce.order_status_count": [
+      "ecommerce_ops.orders.order_status",
+      "ecommerce_ops.orders.order_id"
+    ],
+    "commerce.august_completed_sales": [
+      "ecommerce_ops.orders.region",
+      "ecommerce_ops.orders.paid_amount",
+      "ecommerce_ops.orders.order_status",
+      "ecommerce_ops.orders.ordered_at"
+    ],
+    "commerce.store_type_sales": [
+      "ecommerce_ops.orders.store_id",
+      "ecommerce_ops.orders.paid_amount",
+      "ecommerce_ops.orders.order_status",
+      "ecommerce_ops.orders.ordered_at",
+      "ecommerce_ops.stores.store_id",
+      "ecommerce_ops.stores.store_type"
     ]
   }
 }
