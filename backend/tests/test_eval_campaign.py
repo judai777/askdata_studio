@@ -4,6 +4,7 @@ import json
 import fcntl
 import io
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -12,7 +13,8 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app import evaluation
-from app.eval_campaign import get_campaign, list_campaigns, main, run_campaign
+from app.eval_campaign import campaign_manager, get_campaign, list_campaigns, main, run_campaign
+from app.eval_campaign_gate import approve_baseline, compare_to_baseline
 from app.main import app
 
 
@@ -74,6 +76,22 @@ class EvalCampaignTests(unittest.TestCase):
                 finally:
                     fcntl.flock(lock, fcntl.LOCK_UN)
 
+    def test_running_shard_detail_is_not_misclassified_as_interrupted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.RUN_DIR", Path(directory) / "runs"):
+            root = evaluation.RUN_DIR
+            campaign_dir = root / "_campaigns"
+            campaign_dir.mkdir(parents=True)
+            run_id = "run000000001"
+            (root / f"{run_id}.json").write_text(json.dumps({"id": run_id, "status": "running"}), encoding="utf-8")
+            (campaign_dir / "demo00000005.json").write_text(json.dumps({"shards": [{"run_ids": [run_id]}]}), encoding="utf-8")
+            with (campaign_dir / "demo00000005.lock").open("a+") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try:
+                    self.assertEqual(evaluation.EvaluationService().get_run(run_id)["status"], "running")
+                finally:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+            self.assertEqual(evaluation.EvaluationService().get_run(run_id)["status"], "interrupted")
+
     def test_live_requires_explicit_remote_budget(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "显式允许远程"):
@@ -110,6 +128,77 @@ class EvalCampaignTests(unittest.TestCase):
                     self.assertEqual(client.get("/api/eval/campaigns/demo00000003", headers=headers).json(), campaign)
                     self.assertEqual(client.get("/api/eval/campaigns/bad", headers=headers).status_code, 404)
                     self.assertEqual(client.get("/api/eval/campaigns", headers={"Authorization": f"Bearer {sales}"}).status_code, 403)
+
+    def test_admin_starts_background_campaign_and_live_requires_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.RUN_DIR", Path(directory) / "runs"):
+            with TestClient(app) as client:
+                admin = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"}).json()["access_token"]
+                sales = client.post("/api/auth/login", json={"username": "sales", "password": "sales123"}).json()["access_token"]
+                payload = {"campaign_id": "demo00000004", "task_ids": TASK_IDS, "mode": "demo", "trials": 1}
+                self.assertEqual(client.post("/api/eval/campaigns", headers={"Authorization": f"Bearer {sales}"}, json=payload).status_code, 403)
+                started = client.post("/api/eval/campaigns", headers={"Authorization": f"Bearer {admin}"}, json=payload)
+                self.assertEqual(started.status_code, 200)
+                self.assertIn(started.json()["status"], {"queued", "running", "completed"})
+                for _ in range(40):
+                    progress = client.get("/api/eval/campaigns/demo00000004", headers={"Authorization": f"Bearer {admin}"}).json()
+                    if progress["status"] == "completed":
+                        break
+                    time.sleep(0.1)
+                self.assertEqual(progress["summary"]["completed_tasks"], 6)
+                self.assertEqual(progress["status"], "completed")
+                for _ in range(20):
+                    if campaign_manager._active_id is None:
+                        break
+                    time.sleep(0.05)
+                repeated = client.post("/api/eval/campaigns", headers={"Authorization": f"Bearer {admin}"}, json=payload)
+                self.assertEqual(repeated.status_code, 200)
+                self.assertEqual(repeated.json()["shards"], progress["shards"])
+                live = {**payload, "campaign_id": "live00000004", "task_ids": [TASK_IDS[0]], "mode": "live", "request_limit": 20, "allow_remote": True}
+                with patch("app.eval_campaign.resolve_model", return_value=type("NoKey", (), {"api_key": ""})()):
+                    self.assertEqual(client.post("/api/eval/campaigns", headers={"Authorization": f"Bearer {admin}"}, json=live).status_code, 400)
+
+    def test_approved_live_baseline_gate_detects_regression_and_incomplete_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("app.evaluation.RUN_DIR", root / "runs"):
+                service = evaluation.EvaluationService()
+                campaign_dir = evaluation.RUN_DIR / "_campaigns"
+                for campaign_id, model in (("base00000001", "model-a"), ("cand00000001", "model-b")):
+                    record = run_campaign(campaign_id, TASK_IDS[:2], service=service, directory=campaign_dir)
+                    run_path = evaluation.RUN_DIR / f"{record['shards'][0]['run_ids'][0]}.json"
+                    run = json.loads(run_path.read_text(encoding="utf-8"))
+                    run["mode"] = "live"
+                    run["provenance"] = {"kind": "live", "prompt_hash": "prompt", "workflow_hash": "flow", "config": {"llm_model": model, "embedding_model": "same"}}
+                    if model == "model-b":
+                        run["cases"][0]["grade"]["passed"] = False
+                    run_path.write_text(json.dumps(run), encoding="utf-8")
+                    record["plan"]["mode"] = "live"
+                    record["plan"]["request_limit"] = 20
+                    record["plan"]["provenance"] = {"kind": "live", "prompt_hash": "prompt", "workflow_hash": "flow", "config": {"llm_model": model, "embedding_model": "same"}}
+                    (campaign_dir / f"{campaign_id}.json").write_text(json.dumps(record), encoding="utf-8")
+                source = json.loads((campaign_dir / "base00000001.json").read_text(encoding="utf-8"))
+                with self.assertRaisesRegex(ValueError, "计划已变化"):
+                    approve_baseline("base00000001", "invalid", "verified", "demo_admin", directory=campaign_dir, service=service)
+                baseline = approve_baseline("base00000001", source["plan_hash"], "逐题检查", "demo_admin", directory=campaign_dir, service=service)
+                self.assertEqual(baseline["passed"], 2)
+                with self.assertRaisesRegex(ValueError, "已批准"):
+                    approve_baseline("base00000001", source["plan_hash"], "再次批准", "demo_admin", directory=campaign_dir, service=service)
+                result = compare_to_baseline("base00000001", "cand00000001", directory=campaign_dir, service=service)
+                self.assertFalse(result["passed"])
+                self.assertEqual(result["regressed"], [TASK_IDS[0]])
+                with TestClient(app) as client:
+                    admin = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"}).json()["access_token"]
+                    sales = client.post("/api/auth/login", json={"username": "sales", "password": "sales123"}).json()["access_token"]
+                    self.assertEqual(client.get("/api/eval/campaign-baselines", headers={"Authorization": f"Bearer {sales}"}).status_code, 403)
+                    self.assertEqual(client.post("/api/eval/campaign-baselines", headers={"Authorization": f"Bearer {sales}"}, json={"campaign_id": "base00000001", "fingerprint": source["plan_hash"], "note": "unauthorized"}).status_code, 403)
+                    self.assertEqual(client.get("/api/eval/campaign-baselines", headers={"Authorization": f"Bearer {admin}"}).json()[0]["campaign_id"], "base00000001")
+                    self.assertEqual(client.get("/api/eval/campaign-gate?baseline=base00000001&candidate=cand00000001", headers={"Authorization": f"Bearer {admin}"}).json(), result)
+                candidate_path = campaign_dir / "cand00000001.json"
+                candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+                candidate["status"] = "interrupted"
+                candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "已完成"):
+                    compare_to_baseline("base00000001", "cand00000001", directory=campaign_dir, service=service)
 
 
 if __name__ == "__main__":

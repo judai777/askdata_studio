@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import csv
+import fcntl
 import json
 import os
 import shutil
@@ -262,6 +263,26 @@ def failure_summary(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 key = (attribution["kind"], attribution["stage"])
                 counts[key] = counts.get(key, 0) + 1
     return [{"kind": kind, "stage": stage, "count": count} for (kind, stage), count in sorted(counts.items(), key=lambda item: (item[0][0], item[0][1] or ""))]
+
+
+def _campaign_run_active(run_id: str) -> bool:
+    root = RUN_DIR / "_campaigns"
+    if not root.exists():
+        return False
+    for path in root.glob("*.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not any(run_id in shard.get("run_ids", []) for shard in record.get("shards", [])):
+            continue
+        with path.with_suffix(".lock").open("a+") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    return False
 
 
 def compare_records(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
@@ -794,7 +815,7 @@ class EvaluationService:
         if not run_id.isalnum() or len(run_id) != 12:
             raise FileNotFoundError(run_id)
         record = json.loads((RUN_DIR / f"{run_id}.json").read_text(encoding="utf-8"))
-        if record.get("status") in {"queued", "running", "cancel_requested"} and self._active_run_id != run_id:
+        if record.get("status") in {"queued", "running", "cancel_requested"} and self._active_run_id != run_id and not _campaign_run_active(run_id):
             record["status"] = "interrupted"
             record["error"] = "服务重启或后台进程中断"
             self._save(record)

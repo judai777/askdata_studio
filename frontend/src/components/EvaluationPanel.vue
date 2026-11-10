@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { api } from "../api"
-import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalCampaign, EvalCandidateSqlBatch, EvalCandidateSqlCheck, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
+import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalCampaign, EvalCampaignBaseline, EvalCampaignGate, EvalCandidateSqlBatch, EvalCandidateSqlCheck, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
 
 const tasks = ref<EvalTask[]>([])
 const benchmarkReadiness = ref<EvalBenchmarkReadiness | null>(null)
@@ -20,6 +20,12 @@ const selected = ref<string[]>([])
 const runs = ref<EvalRunSummary[]>([])
 const campaigns = ref<EvalCampaign[]>([])
 const campaignError = ref("")
+const campaignBusy = ref(false)
+const campaignBaselines = ref<EvalCampaignBaseline[]>([])
+const campaignBaselineNote = ref("")
+const campaignBaselineId = ref("")
+const campaignCandidateId = ref("")
+const campaignGate = ref<EvalCampaignGate | null>(null)
 const current = ref<EvalRun | null>(null)
 const busy = ref(false)
 const cancelBusy = ref(false)
@@ -60,9 +66,10 @@ const calibrationBusy = ref(false)
 const calibrationError = ref("")
 const auditCases = computed(() => [...(audit.value?.cases || [])].sort((a, b) => ({ survived: 0, invalid: 1, killed: 2 })[a.status] - ({ survived: 0, invalid: 1, killed: 2 })[b.status]))
 let timer: number | null = null
+let campaignTimer: number | null = null
 let polling = false
 
-onUnmounted(() => { if (timer !== null) window.clearInterval(timer) })
+onUnmounted(() => { if (timer !== null) window.clearInterval(timer); if (campaignTimer !== null) window.clearInterval(campaignTimer) })
 
 async function pollRun() {
   if (!current.value || polling) return
@@ -91,11 +98,13 @@ function watchRun() {
 
 onMounted(async () => {
   try {
-    const [catalog, history, reviewCatalog, models, readiness, campaignHistory] = await Promise.all([api.evalCatalog(), api.evalRuns(), api.evalReviews(), api.evalModels(), api.evalBenchmarkReadiness(), api.evalCampaigns()])
+    const [catalog, history, reviewCatalog, models, readiness, campaignHistory, baselineHistory] = await Promise.all([api.evalCatalog(), api.evalRuns(), api.evalReviews(), api.evalModels(), api.evalBenchmarkReadiness(), api.evalCampaigns(), api.evalCampaignBaselines()])
     tasks.value = catalog.tasks
     selected.value = catalog.tasks.slice(0, 5).map(task => task.id)
     runs.value = history
     campaigns.value = campaignHistory
+    campaignBaselines.value = baselineHistory
+    campaignTimer = window.setInterval(() => { if (campaigns.value.some(item => ['queued', 'running'].includes(item.status))) void refreshCampaigns() }, 2000)
     reviews.value = reviewCatalog
     candidateTaskId.value = candidateTaskOptions.value[0]?.id || ""
     benchmarkReadiness.value = readiness
@@ -110,6 +119,59 @@ onMounted(async () => {
 async function refreshCampaigns() {
   campaignError.value = ""
   try { campaigns.value = await api.evalCampaigns() }
+  catch (caught) { campaignError.value = String(caught) }
+}
+
+async function startCampaign(existing?: EvalCampaign) {
+  campaignError.value = ""
+  const taskIds = existing?.task_ids || selected.value
+  const campaignMode = existing?.mode || mode.value
+  const campaignTrials = (existing?.trials || trials.value) as 1 | 3
+  const campaignFixture = (existing?.fixture_id || fixtureId.value) as EvalFixtureId
+  const campaignModel = existing?.model || selectedModel.value
+  const campaignLimit = existing?.request_limit ?? requestLimit.value
+  if (!taskIds.length || taskIds.length > 50) { campaignError.value = "作业请选择 1–50 题"; return }
+  if (!existing) {
+    const databases = new Set(taskIds.map(id => tasks.value.find(task => task.id === id)?.database))
+    if (databases.size !== 1) { campaignError.value = "同一作业只能选择同一数据库的题目"; return }
+  }
+  if (campaignMode === 'live') {
+    try { reviews.value = await api.evalReviews() }
+    catch (caught) { campaignError.value = `无法核对审核状态：${String(caught)}`; return }
+    if (taskIds.some(id => !reviews.value?.tasks.some(item => item.task_id === id && item.status === 'approved'))) { campaignError.value = "真实作业只接受已审核通过的题目"; return }
+    if (!window.confirm(`${existing ? '续跑' : '启动'}真实模型作业：${taskIds.length} 题，${campaignTrials} 次独立试验，Chat 模型 ${campaignModel}，整个作业最多 ${campaignLimit} 次远程 HTTP 请求（含重试）。${existing ? '未完成片可能重复发送请求。' : ''}可能产生 API 费用。继续吗？`)) return
+  }
+  campaignBusy.value = true
+  try {
+    const started = await api.evalStartCampaign({ campaign_id: existing?.id || crypto.randomUUID().replaceAll('-', '').slice(0, 12), task_ids: taskIds,
+      mode: campaignMode, trials: campaignTrials, fixture_id: campaignFixture,
+      request_limit: campaignMode === 'live' ? campaignLimit : undefined, model: campaignMode === 'live' ? campaignModel : undefined,
+      allow_remote: campaignMode === 'live', retry_interrupted: Boolean(existing && campaignMode === 'live') })
+    campaigns.value = [started, ...campaigns.value.filter(item => item.id !== started.id)]
+    await refreshCampaigns()
+  } catch (caught) { campaignError.value = String(caught) }
+  finally { campaignBusy.value = false }
+}
+
+async function approveCampaignBaseline(campaign: EvalCampaign) {
+  campaignError.value = ""
+  if (!campaignBaselineNote.value.trim()) { campaignError.value = "请先填写基线审核意见"; return }
+  if (!window.confirm(`批准真实模型作业 ${campaign.id} 为回归基线？请先逐题核对运行轨迹；当前通过 ${campaign.summary?.passed ?? 0}/${campaign.summary?.total_tasks ?? 0} 题。`)) return
+  campaignBusy.value = true
+  try {
+    await api.evalApproveCampaignBaseline(campaign.id, campaign.plan_hash, campaignBaselineNote.value)
+    campaignBaselines.value = await api.evalCampaignBaselines()
+    campaignBaselineId.value = campaign.id
+    campaignBaselineNote.value = ""
+  } catch (caught) { campaignError.value = String(caught) }
+  finally { campaignBusy.value = false }
+}
+
+async function compareCampaigns() {
+  campaignError.value = ""
+  campaignGate.value = null
+  if (!campaignBaselineId.value || !campaignCandidateId.value) { campaignError.value = "请选择基线和候选作业"; return }
+  try { campaignGate.value = await api.evalCampaignGate(campaignBaselineId.value, campaignCandidateId.value) }
   catch (caught) { campaignError.value = String(caught) }
 }
 
@@ -481,18 +543,32 @@ function failureLabel(value: EvalFailureAttribution | null) {
     <section class="eval-card eval-history"><h2>历史运行</h2><button v-for="run in runs" :key="run.id" @click="openRun(run.id)">{{ run.started_at.slice(0, 19).replace('T', ' ') }} · {{ run.mode }} · {{ run.fixture_id || 'base' }} · {{ run.model }}<span v-if="run.baseline_run_id"> · 候选 ← {{ run.baseline_run_id }}</span> · {{ run.status || 'completed' }} · {{ run.summary.passed }}/{{ run.summary.total }}</button><p v-if="!runs.length">暂无运行记录</p></section>
     <section class="eval-card eval-history">
       <h2>自动化评测作业</h2>
-      <p>查看命令行分片作业及进度；演示作业仅验证执行流程，不代表模型正确率。</p>
+      <p>按上方选题和运行配置发起分片作业，单次可选 1–50 题；演示作业仅验证执行流程，不代表模型正确率。</p>
+      <button class="eval-secondary" :disabled="campaignBusy || !selected.length" @click="startCampaign()">{{ campaignBusy ? '正在启动…' : '按当前配置创建作业' }}</button>
       <button class="eval-secondary" @click="refreshCampaigns">刷新作业</button>
       <p v-if="campaignError" class="eval-error">{{ campaignError }}</p>
       <p v-if="!campaigns.length">暂无作业记录</p>
       <details v-for="campaign in campaigns" :key="campaign.id" class="eval-campaign">
         <summary>{{ campaign.id }} · {{ campaign.mode === 'demo' ? '无模型演示' : '真实模型' }} · {{ campaign.status }} · {{ campaign.summary?.completed_tasks ?? 0 }}/{{ campaign.summary?.total_tasks ?? 0 }} 题</summary>
         <p class="eval-meta">{{ campaign.created_at.slice(0, 19).replace('T', ' ') }} · {{ campaign.fixture_id }} · {{ campaign.trials }} 次试验 · 计划指纹 {{ campaign.plan_hash }}<span v-if="campaign.mode === 'live'"> · 已用远程请求 {{ campaign.summary?.remote_requests_used ?? 0 }}</span></p>
+        <p v-if="campaign.mode === 'live' && campaign.summary?.schema_fields" class="eval-meta">字段级 Schema：有效试验 {{ campaign.summary.schema_fields.labeled_tasks }}，宏平均召回 {{ formatAgreement(campaign.summary.schema_fields.macro_recall) }}；SQL 结果正确 {{ campaign.summary.sql_outcome?.result_correct ?? 0 }}/{{ campaign.summary.sql_outcome?.attempts ?? 0 }} 次；模型调用 {{ campaign.summary.model_metrics?.model_calls ?? 0 }} 次</p>
+        <button v-if="['failed', 'interrupted'].includes(campaign.status)" class="eval-secondary" :disabled="campaignBusy" @click="startCampaign(campaign)">续跑未完成片</button>
+        <div v-if="campaign.mode === 'live' && campaign.status === 'completed' && !campaignBaselines.some(item => item.campaign_id === campaign.id)">
+          <label class="eval-review-note">基线审核意见<textarea v-model="campaignBaselineNote" rows="2" maxlength="1000" placeholder="先查看各片逐题轨迹，再写明接受该基线的理由"></textarea></label>
+          <button class="eval-secondary" :disabled="campaignBusy" @click="approveCampaignBaseline(campaign)">人工批准为基线</button>
+        </div>
+        <p v-if="campaignBaselines.some(item => item.campaign_id === campaign.id)" class="eval-meta">已人工批准为基线</p>
         <div v-for="(shard, index) in campaign.shards" :key="index" class="eval-campaign-shard">
           <strong>第 {{ index + 1 }} 片 · {{ shard.status }}</strong><p class="eval-meta">{{ shard.task_ids.join('、') }}</p>
           <button v-for="runId in shard.run_ids" :key="runId" @click="openRun(runId)">查看运行 {{ runId }}</button>
         </div>
       </details>
+      <div class="eval-compare-controls">
+        <label>已批准基线<select v-model="campaignBaselineId"><option value="">选择基线</option><option v-for="item in campaignBaselines" :key="item.campaign_id" :value="item.campaign_id">{{ item.campaign_id }} · {{ item.passed }}/{{ item.task_count }}</option></select></label>
+        <label>候选作业<select v-model="campaignCandidateId"><option value="">选择候选</option><option v-for="item in campaigns.filter(campaign => campaign.mode === 'live' && campaign.status === 'completed')" :key="item.id" :value="item.id">{{ item.id }} · {{ item.model }}</option></select></label>
+        <button class="eval-secondary" @click="compareCampaigns">检查逐题回归门槛</button>
+      </div>
+      <p v-if="campaignGate" :class="campaignGate.passed ? 'pass' : 'fail'">{{ campaignGate.passed ? '门槛通过' : '门槛未通过' }} · 基线 {{ campaignGate.baseline_passed }}/{{ campaignGate.task_count }} · 候选 {{ campaignGate.candidate_passed }}/{{ campaignGate.task_count }} · 退化 {{ campaignGate.regressed.join('、') || '无' }} · 改善 {{ campaignGate.improved.join('、') || '无' }}</p>
     </section>
     <section class="eval-card eval-history">
       <h2>4 · 回归对比</h2>

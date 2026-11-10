@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, StrictInt
+from pydantic import BaseModel, StrictBool, StrictInt
 
 from ..errors import PipelineStageError
-from ..eval_campaign import get_campaign, list_campaigns
+from ..eval_campaign import campaign_manager, get_campaign, list_campaigns
+from ..eval_campaign_gate import approve_baseline, compare_to_baseline, list_baselines
 from ..eval_models import model_catalog
 from ..evaluation import EvaluationService
 from ..models import (
@@ -33,6 +34,18 @@ class EvalRunRequest(BaseModel):
     fixture_id: str = "base"
     request_limit: StrictInt | None = None
     model: str | None = None
+
+
+class EvalCampaignRequest(EvalRunRequest):
+    campaign_id: str
+    allow_remote: StrictBool = False
+    retry_interrupted: StrictBool = False
+
+
+class EvalCampaignBaselineRequest(BaseModel):
+    campaign_id: str
+    fingerprint: str
+    note: str
 
 
 class EvalReviewRequest(BaseModel):
@@ -90,6 +103,45 @@ def eval_catalog(_: AuthUser = Depends(require_admin)) -> dict:
 @router.get("/eval/campaigns")
 def eval_campaigns(_: AuthUser = Depends(require_admin)) -> list[dict]:
     return list_campaigns()
+
+
+@router.post("/eval/campaigns")
+def eval_start_campaign(payload: EvalCampaignRequest, _: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return campaign_manager.start(payload.campaign_id, payload.task_ids, mode=payload.mode,
+                                      trials=payload.trials, fixture_id=payload.fixture_id,
+                                      request_limit=payload.request_limit, model=payload.model,
+                                      allow_remote=payload.allow_remote,
+                                      retry_interrupted=payload.retry_interrupted)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.get("/eval/campaign-baselines")
+def eval_campaign_baselines(_: AuthUser = Depends(require_admin)) -> list[dict]:
+    return list_baselines()
+
+
+@router.post("/eval/campaign-baselines")
+def eval_approve_campaign_baseline(payload: EvalCampaignBaselineRequest, user: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return approve_baseline(payload.campaign_id, payload.fingerprint, payload.note, user.user_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="评测作业不存在") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.get("/eval/campaign-gate")
+def eval_campaign_gate(baseline: str, candidate: str, _: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return compare_to_baseline(baseline, candidate)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="基线或候选作业不存在") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/eval/campaigns/{campaign_id}")

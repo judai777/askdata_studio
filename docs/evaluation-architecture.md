@@ -8,9 +8,15 @@ flowchart TB
     API --> Queue[单进程后台执行器]
     Queue --> Runner[EvaluationService]
     CLI[自动化评测作业 CLI] --> Campaign[eval_campaign 分片与续跑]
+    API --> CampaignManager[单作业后台控制]
+    CampaignManager --> Campaign
     Campaign --> Runner
     Campaign --> CampaignStore[作业清单与版本指纹]
     CampaignStore --> API
+    CampaignStore --> Baseline[人工批准的真实模型基线]
+    Baseline --> CampaignGate[逐题回归门槛]
+    Runs --> CampaignGate
+    CampaignGate --> UI
     Runs --> Campaign
     CampaignStore --> Campaign
     UI --> Cancel[取消请求]
@@ -79,7 +85,7 @@ flowchart TB
 
 各阶段职责：任务定义输入和预期；runner 为每次试验隔离会话并收集输出；oracle 在固定数据集上计算标准结果；grader 验证路由、结果、SQL 表与安全；权限探针用受限账号直接验证数据库边界；记录保留逐题逐试验轨迹；UI 展示汇总和失败细节。
 
-自动化作业把固定题目集分成现有运行器允许的小片，保存作业计划、来源指纹和每片运行 ID；重启后核对版本并跳过已完成片。每片仍走同一个 oracle、判分器和轨迹存储。管理员页只读展示作业进度并可进入关联运行详情。CI 中的无模型作业只验证编排；真实 Agent 评测须显式允许远程请求并设置总预算。设计来源及模块映射见[评测平台结构调研](evaluation-platform-research.md)。
+自动化作业把固定题目集分成现有运行器允许的小片，保存作业计划、来源指纹和每片运行 ID；重启后核对版本并跳过已完成片。每片仍走同一个 oracle、判分器和轨迹存储。管理员页可发起、续跑和查看作业；真实模式需确认总请求预算，未配置远程密钥时拒绝。已完成的真实作业可由管理员逐题核对后批准为基线，候选作业须完整覆盖同一批题且保持数据、判分及非 Chat 配置一致，原先通过的题退化即未过门槛。CI 中的无模型作业只验证编排；设计来源见[评测平台结构调研](evaluation-platform-research.md)，本阶段取舍见[第四十一阶段决策](evaluation-v41-decisions.md)。
 
 回归对比读取两份已完成记录，先校验任务版本、fixture 指纹、标准答案指纹、模式和试验次数，再对共同题按 ID 比较聚合判分及各项检查；只在一侧出现的题单独列出。对比不执行模型或 SQL。
 

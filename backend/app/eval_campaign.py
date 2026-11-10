@@ -8,15 +8,18 @@ import json
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from . import evaluation
 from .eval_grader_version import grader_hash
 from .eval_models import resolve_model
 from .eval_provenance import provenance_snapshot
-from .eval_schema_metrics import load_field_targets
+from .eval_schema_metrics import aggregate_schema_fields, load_field_targets
+from .eval_sql_metrics import aggregate_sql_attempts
 
 
 def _save(path: Path, record: dict[str, Any]) -> None:
@@ -52,24 +55,18 @@ def _summary(record: dict[str, Any], service: evaluation.EvaluationService) -> d
         "total_shards": len(record["shards"]),
         "remote_requests_used": used if record["plan"]["mode"] == "live" else 0,
     }
+    if record["plan"]["mode"] == "live":
+        attempts = [attempt for run in completed for case in run.get("cases", []) for attempt in case.get("attempts", [])]
+        result["schema_fields"] = aggregate_schema_fields([attempt.get("schema_fields") for attempt in attempts])
+        result["sql_outcome"] = aggregate_sql_attempts([attempt.get("sql_outcome") for attempt in attempts])
+        result["model_metrics"] = evaluation.aggregate_metrics(attempts)
     record["summary"] = result
     return result
 
 
-def _run_campaign_unlocked(
-    campaign_id: str,
-    task_ids: list[str],
-    *,
-    mode: str = "demo",
-    trials: int = 1,
-    fixture_id: str = "base",
-    request_limit: int | None = None,
-    model: str | None = None,
-    allow_remote: bool = False,
-    retry_interrupted: bool = False,
-    service: evaluation.EvaluationService | None = None,
-    directory: Path | None = None,
-) -> dict[str, Any]:
+def _build_plan(campaign_id: str, task_ids: list[str], mode: str, trials: int, fixture_id: str,
+                request_limit: int | None, model: str | None, allow_remote: bool,
+                service: evaluation.EvaluationService) -> tuple[dict[str, Any], list[list[str]], list[dict[str, Any]]]:
     if not re.fullmatch(r"[A-Za-z0-9]{12}", campaign_id):
         raise ValueError("作业 ID 必须是 12 位字母或数字")
     if not isinstance(task_ids, list) or not task_ids or any(not isinstance(task_id, str) for task_id in task_ids) or len(task_ids) != len(set(task_ids)):
@@ -80,7 +77,6 @@ def _run_campaign_unlocked(
         raise ValueError("无模型作业不能设置远程调用参数")
     if mode == "live" and (not allow_remote or type(request_limit) is not int or not 1 <= request_limit <= 100):
         raise ValueError("实时作业须显式允许远程调用，并设置 1–100 次总请求预算")
-    service = service or evaluation.EvaluationService()
     catalog = service.catalog()
     indexed = {task["id"]: task for task in catalog["tasks"]}
     if any(task_id not in indexed for task_id in task_ids):
@@ -106,8 +102,12 @@ def _run_campaign_unlocked(
         "field_targets_hash": field_hash, "request_limit": request_limit,
         "provenance": provenance_snapshot(mode, config),
     }
+    return plan, chunks, tasks
+
+
+def _load_or_create(campaign_id: str, plan: dict[str, Any], chunks: list[list[str]], directory: Path) -> tuple[dict[str, Any], Path]:
     plan_hash = hashlib.sha256(json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
-    path = (directory or evaluation.RUN_DIR / "_campaigns") / f"{campaign_id}.json"
+    path = directory / f"{campaign_id}.json"
     if path.exists():
         record = json.loads(path.read_text(encoding="utf-8"))
         if record.get("plan_hash") != plan_hash:
@@ -119,14 +119,38 @@ def _run_campaign_unlocked(
             "shards": [{"task_ids": chunk, "run_ids": [], "status": "pending"} for chunk in chunks],
         }
         _save(path, record)
+    return record, path
+
+
+def _run_campaign_unlocked(
+    campaign_id: str,
+    task_ids: list[str],
+    *,
+    mode: str = "demo",
+    trials: int = 1,
+    fixture_id: str = "base",
+    request_limit: int | None = None,
+    model: str | None = None,
+    allow_remote: bool = False,
+    retry_interrupted: bool = False,
+    service: evaluation.EvaluationService | None = None,
+    directory: Path | None = None,
+) -> dict[str, Any]:
+    service = service or evaluation.EvaluationService()
+    plan, chunks, tasks = _build_plan(campaign_id, task_ids, mode, trials, fixture_id, request_limit, model, allow_remote, service)
+    record, path = _load_or_create(campaign_id, plan, chunks, directory or evaluation.RUN_DIR / "_campaigns")
     _summary(record, service)
     for shard in record["shards"]:
         if shard["status"] == "completed":
             continue
-        if evaluation._task_fixture_hash(tasks, fixture_id) != plan["fixture_hash"] or evaluation._oracle_hash() != plan["oracle_hash"]:
+        if (evaluation._task_fixture_hash(tasks, fixture_id) != plan["fixture_hash"]
+                or evaluation._oracle_hash() != plan["oracle_hash"]
+                or grader_hash() != plan["grader_hash"]
+                or load_field_targets(evaluation.FIELD_TARGET_FILE, plan["task_version"])[1] != plan["field_targets_hash"]
+                or provenance_snapshot(mode, resolve_model(mode, model)) != plan["provenance"]):
             record["status"] = "failed"
             _save(path, record)
-            raise ValueError("作业执行期间数据或标准答案已变化，请使用新作业 ID")
+            raise ValueError("作业执行期间数据、判分或实现来源已变化，请使用新作业 ID")
         previous = None
         if shard["run_ids"]:
             try:
@@ -190,12 +214,14 @@ def run_campaign(campaign_id: str, task_ids: list[str], **kwargs: Any) -> dict[s
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def _public_campaign(record: dict[str, Any]) -> dict[str, Any]:
+def _public_campaign(record: dict[str, Any], *, status: str | None = None) -> dict[str, Any]:
     plan = record["plan"]
     return {
         "id": record["id"], "created_at": record["created_at"],
-        "status": record["status"], "plan_hash": record["plan_hash"],
+        "status": status or record["status"], "plan_hash": record["plan_hash"],
         "mode": plan["mode"], "trials": plan["trials"],
+        "task_ids": plan["task_ids"], "request_limit": plan["request_limit"],
+        "model": (plan.get("provenance", {}).get("config") or {}).get("llm_model"),
         "fixture_id": plan["fixture_id"], "task_version": plan["task_version"],
         "summary": record.get("summary"),
         "shards": [
@@ -208,8 +234,21 @@ def _public_campaign(record: dict[str, Any]) -> dict[str, Any]:
 def get_campaign(campaign_id: str, directory: Path | None = None) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Za-z0-9]{12}", campaign_id):
         raise FileNotFoundError(campaign_id)
-    path = (directory or evaluation.RUN_DIR / "_campaigns") / f"{campaign_id}.json"
-    return _public_campaign(json.loads(path.read_text(encoding="utf-8")))
+    root = directory or evaluation.RUN_DIR / "_campaigns"
+    path = root / f"{campaign_id}.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    status = record["status"]
+    if status in {"queued", "running"} and campaign_manager._active_id != campaign_id:
+        lock_path = root / f"{campaign_id}.lock"
+        with lock_path.open("a+") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                status = "interrupted"
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    return _public_campaign(record, status=status)
 
 
 def list_campaigns(directory: Path | None = None) -> list[dict[str, Any]]:
@@ -218,6 +257,74 @@ def list_campaigns(directory: Path | None = None) -> list[dict[str, Any]]:
         return []
     campaigns = [get_campaign(path.stem, root) for path in root.glob("*.json") if re.fullmatch(r"[A-Za-z0-9]{12}", path.stem)]
     return sorted(campaigns, key=lambda item: item["created_at"], reverse=True)
+
+
+class CampaignManager:
+    def __init__(self) -> None:
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="askdata-campaign")
+        self._lock = Lock()
+        self._active_id: str | None = None
+
+    def start(self, campaign_id: str, task_ids: list[str], *, mode: str = "demo", trials: int = 1,
+              fixture_id: str = "base", request_limit: int | None = None, model: str | None = None,
+              allow_remote: bool = False, retry_interrupted: bool = False) -> dict[str, Any]:
+        if not isinstance(task_ids, list) or len(task_ids) > 50:
+            raise ValueError("页面作业最多选择 50 题")
+        service = evaluation.EvaluationService()
+        plan, chunks, _ = _build_plan(campaign_id, task_ids, mode, trials, fixture_id, request_limit, model, allow_remote, service)
+        directory = evaluation.RUN_DIR / "_campaigns"
+        with self._lock:
+            if self._active_id:
+                raise RuntimeError("已有自动化评测作业正在运行")
+            directory.mkdir(parents=True, exist_ok=True)
+            with (directory / f"{campaign_id}.lock").open("a+") as campaign_lock:
+                try:
+                    fcntl.flock(campaign_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as error:
+                    raise RuntimeError("该评测作业正在另一进程执行") from error
+                fcntl.flock(campaign_lock, fcntl.LOCK_UN)
+            record, path = _load_or_create(campaign_id, plan, chunks, directory)
+            _summary(record, service)
+            if record["summary"]["completed_shards"] == len(chunks):
+                record["status"] = "completed"
+                _save(path, record)
+                return _public_campaign(record)
+            incomplete = next(shard for shard in record["shards"] if shard["status"] != "completed")
+            if mode == "live" and incomplete["run_ids"] and not retry_interrupted:
+                raise ValueError("实时未完成片可能重复发送请求，请确认后重试")
+            self._active_id = campaign_id
+            record["status"] = "queued"
+            _save(path, record)
+            self._executor.submit(self._run_and_finish, campaign_id, task_ids, path, service, directory,
+                                  mode, trials, fixture_id, request_limit, model, allow_remote, retry_interrupted)
+            return _public_campaign(record)
+
+    def _run_and_finish(self, campaign_id: str, task_ids: list[str], path: Path,
+                        service: evaluation.EvaluationService, directory: Path, mode: str, trials: int,
+                        fixture_id: str, request_limit: int | None, model: str | None,
+                        allow_remote: bool, retry_interrupted: bool) -> None:
+        error = False
+        try:
+            run_campaign(campaign_id, task_ids, mode=mode, trials=trials, fixture_id=fixture_id,
+                         request_limit=request_limit, model=model, allow_remote=allow_remote,
+                         retry_interrupted=retry_interrupted, service=service, directory=directory)
+        except Exception:
+            error = True
+        finally:
+            self._finished(campaign_id, path, error)
+
+    def _finished(self, campaign_id: str, path: Path, error: bool) -> None:
+        with self._lock:
+            if error and path.exists():
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if record["status"] in {"queued", "running"}:
+                    record["status"] = "failed"
+                    _save(path, record)
+            if self._active_id == campaign_id:
+                self._active_id = None
+
+
+campaign_manager = CampaignManager()
 
 
 def main() -> int:

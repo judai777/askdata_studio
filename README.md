@@ -153,3 +153,5 @@ P2 失败归因已完成：失败试验给出主要排查位置，区分工作�
 目标域 `ecommerce_ops` 已有 3 道开发题草稿，可在管理员评测台逐题查看标准 SQL 和 base 结果，并进入人工审核。它们尚不构成模型成绩；目标域当前只支持 base 数据集，同次运行只选同一数据库。数据指纹覆盖目标域 CSV 内容。详见[第三十九阶段决策](docs/evaluation-v39-decisions.md)。
 
 自动化评测作业可在 `backend` 目录运行 `python -m app.eval_campaign --campaign-id demo00000001 --task-id mock.region_sales --task-id mock.customer_level`。重复相同命令会核对版本并跳过已完成分片；大量题目可用 `--task-file` 指向包含 `{"task_ids":["..."]}` 的 JSON 文件。作业按单次运行限制分片，记录存于本地 `data/eval_runs/_campaigns/`，管理员评测页可查看作业进度和关联运行。无模型作业用于验证编排，不代表 Agent 准确率；实时作业需显式传入 `--mode live --allow-remote --request-limit 20` 并配置远程密钥，重试中断片还需 `--retry-interrupted`。结构依据见[评测平台调研](docs/evaluation-platform-research.md)和[第四十阶段决策](docs/evaluation-v40-decisions.md)。
+
+管理员评测页现在也可按当前选题创建分片作业并续跑未完成片；实时模式会再次确认整个作业的远程请求上限。逐题检查真实作业的运行轨迹后，可填写意见批准为基线，再选候选作业检查完整性、实验条件和逐题退化。基线与门槛记录只含安全摘要。未配置远程密钥时，页面不能产生新的真实模型成绩；无模型 CI 冒烟仍可运行。详见[第四十一阶段决策](docs/evaluation-v41-decisions.md)。
