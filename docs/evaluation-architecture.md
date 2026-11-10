@@ -7,6 +7,12 @@ flowchart TB
     UI[Vue 管理员评测台] --> API[FastAPI /api/eval]
     API --> Queue[单进程后台执行器]
     Queue --> Runner[EvaluationService]
+    CLI[自动化评测作业 CLI] --> Campaign[eval_campaign 分片与续跑]
+    Campaign --> Runner
+    Campaign --> CampaignStore[作业清单与版本指纹]
+    CampaignStore --> API
+    Runs --> Campaign
+    CampaignStore --> Campaign
     UI --> Cancel[取消请求]
     Cancel --> Queue
     Tasks[backend/evals/tasks.json] --> Runner
@@ -68,9 +74,12 @@ flowchart TB
     Baseline[版本化离线门槛基线] --> Gate[离线回归门槛]
     Audit --> Gate
     Gate --> CI[GitHub Actions / 本地命令]
+    CI -->|无模型作业冒烟| CLI
 ```
 
 各阶段职责：任务定义输入和预期；runner 为每次试验隔离会话并收集输出；oracle 在固定数据集上计算标准结果；grader 验证路由、结果、SQL 表与安全；权限探针用受限账号直接验证数据库边界；记录保留逐题逐试验轨迹；UI 展示汇总和失败细节。
+
+自动化作业把固定题目集分成现有运行器允许的小片，保存作业计划、来源指纹和每片运行 ID；重启后核对版本并跳过已完成片。每片仍走同一个 oracle、判分器和轨迹存储。管理员页只读展示作业进度并可进入关联运行详情。CI 中的无模型作业只验证编排；真实 Agent 评测须显式允许远程请求并设置总预算。设计来源及模块映射见[评测平台结构调研](evaluation-platform-research.md)。
 
 回归对比读取两份已完成记录，先校验任务版本、fixture 指纹、标准答案指纹、模式和试验次数，再对共同题按 ID 比较聚合判分及各项检查；只在一侧出现的题单独列出。对比不执行模型或 SQL。
 
@@ -84,7 +93,7 @@ flowchart TB
 
 题目清单与标准 SQL 分开存放。`edge_v1` 根据原始 CSV 和版本化边界行清单重建临时数据；`edge_v2` 在 v1 之上追加同地区、不同订单的同额实付记录；`edge_v3` 再追加测试客户及 9 月已支付订单，以识别漏 8 月日期过滤。Agent 工具、权限探针和 oracle 在同一 fixture 上运行；原始数据与前三套指纹不变。
 
-任务集 v5.2 含 14 道开发集题。每题有审核说明，管理员可预览标准 SQL 与四套 fixture 的预期结果，再提交通过或退回及意见。审核记录本地持久化；任务、单题 oracle、审核说明或 fixture 指纹改变时旧审核标为过期。首轮人工审核已有 8 题通过、6 题退回；加入 v3 后全部需要复审。评测记录保存当时所选题的审核覆盖度；尚未建立独立保留集。
+任务集 v5.3 含 14 道 `askdata_mock` 题和 3 道 `ecommerce_ops` 开发题。每题有审核说明，管理员可预览标准 SQL 与适用 fixture 的预期结果，再提交通过或退回及意见。审核记录本地持久化；任务、单题 oracle、审核说明或 fixture 指纹改变时旧审核标为过期。项目使用者已确认目标域 3 题的业务口径和字段标签；本地累计 17 题通过。评测记录保存当时所选题的审核覆盖度；尚未建立独立保留集。
 
 人工任务审核确认题目与标准答案是否可信；人工轨迹标签判断某次 Agent 输出是否正确、安全、合规及回答质量。标签与运行 ID、任务 ID、试验序号和轨迹指纹绑定，独立保存在 Git 忽略的 `backend/data/eval_labels.json`，不复制 SQL、结果行或模型正文。轨迹或评测依据变化后旧标签过期。统计只使用实时运行的最新有效标签，按原始判分器指纹列出完成度、安全、过程的 TP/FP/FN/TN；不确定判断不进入一致率分母。回答质量目前只展示人工分布，尚无自动 Judge。
 

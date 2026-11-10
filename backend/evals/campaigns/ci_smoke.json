@@ -1,0 +1,10 @@
+{
+  "task_ids": [
+    "mock.region_sales",
+    "mock.customer_level",
+    "mock.target_comparison",
+    "route.greeting",
+    "mock.date_range",
+    "metric.paid_vs_list"
+  ]
+}

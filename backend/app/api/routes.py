@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, StrictInt
 
 from ..errors import PipelineStageError
+from ..eval_campaign import get_campaign, list_campaigns
 from ..eval_models import model_catalog
 from ..evaluation import EvaluationService
 from ..models import (
@@ -84,6 +85,19 @@ def require_admin(user: AuthUser = Depends(require_user)) -> AuthUser:
 @router.get("/eval/catalog")
 def eval_catalog(_: AuthUser = Depends(require_admin)) -> dict:
     return evaluation_service.catalog()
+
+
+@router.get("/eval/campaigns")
+def eval_campaigns(_: AuthUser = Depends(require_admin)) -> list[dict]:
+    return list_campaigns()
+
+
+@router.get("/eval/campaigns/{campaign_id}")
+def eval_campaign_detail(campaign_id: str, _: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return get_campaign(campaign_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="评测作业不存在") from error
 
 
 @router.get("/eval/benchmark-readiness")

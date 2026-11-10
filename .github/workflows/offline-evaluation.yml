@@ -28,6 +28,9 @@ jobs:
       - name: Check offline evaluation gate
         working-directory: backend
         run: python -m app.eval_gate
+      - name: Smoke test resumable evaluation campaign without model
+        working-directory: backend
+        run: python -m app.eval_campaign --campaign-id ci0000000001 --task-file evals/campaigns/ci_smoke.json
 
   frontend:
     runs-on: ubuntu-latest

@@ -151,3 +151,5 @@ P2 失败归因已完成：失败试验给出主要排查位置，区分工作�
 管理员评测台的“批量候选 SQL 验证”可导入或粘贴 `{"fixture_id":"edge_v3","candidates":[{"task_id":"mock.region_sales","sql":"SELECT ..."}]}`，一次验证 1–20 道已审核的普通 SQL 题。它使用固定数据集和标准答案判分，不调用模型；页面展示逐题结果，下载的 JSON 汇总不含 SQL、结果行或错误正文。详见[第三十八阶段决策](docs/evaluation-v38-decisions.md)。
 
 目标域 `ecommerce_ops` 已有 3 道开发题草稿，可在管理员评测台逐题查看标准 SQL 和 base 结果，并进入人工审核。它们尚不构成模型成绩；目标域当前只支持 base 数据集，同次运行只选同一数据库。数据指纹覆盖目标域 CSV 内容。详见[第三十九阶段决策](docs/evaluation-v39-decisions.md)。
+
+自动化评测作业可在 `backend` 目录运行 `python -m app.eval_campaign --campaign-id demo00000001 --task-id mock.region_sales --task-id mock.customer_level`。重复相同命令会核对版本并跳过已完成分片；大量题目可用 `--task-file` 指向包含 `{"task_ids":["..."]}` 的 JSON 文件。作业按单次运行限制分片，记录存于本地 `data/eval_runs/_campaigns/`，管理员评测页可查看作业进度和关联运行。无模型作业用于验证编排，不代表 Agent 准确率；实时作业需显式传入 `--mode live --allow-remote --request-limit 20` 并配置远程密钥，重试中断片还需 `--retry-interrupted`。结构依据见[评测平台调研](docs/evaluation-platform-research.md)和[第四十阶段决策](docs/evaluation-v40-decisions.md)。

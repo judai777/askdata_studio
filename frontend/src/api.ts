@@ -87,6 +87,8 @@ export const api = {
       method: "DELETE",
     }),
   evalCatalog: () => request<{ version: string; tasks: EvalTask[] }>("/api/eval/catalog"),
+  evalCampaigns: () => request<EvalCampaign[]>("/api/eval/campaigns"),
+  evalCampaignDetail: (id: string) => request<EvalCampaign>(`/api/eval/campaigns/${encodeURIComponent(id)}`),
   evalBenchmarkReadiness: () => request<EvalBenchmarkReadiness>("/api/eval/benchmark-readiness"),
   evalModels: () => request<EvalModelCatalog>("/api/eval/models"),
   evalReviews: () => request<EvalReviewCatalog>("/api/eval/reviews"),
@@ -110,6 +112,7 @@ export const api = {
 }
 
 export interface EvalTask { id: string; category: string; query: string; route: string; kind?: string; required_tables?: string[] }
+export interface EvalCampaign { id: string; created_at: string; status: string; plan_hash: string; mode: "demo" | "live"; trials: number; fixture_id: string; task_version: string; summary: { total_tasks: number; completed_tasks: number; passed: number; completed_shards: number; total_shards: number; remote_requests_used: number } | null; shards: { task_ids: string[]; status: string; run_ids: string[] }[] }
 export interface EvalCandidateSqlCheck { task_id: string; fixture_id: EvalFixtureId; fixture_hash: string; execution_success: boolean; execution_error: string | null; result_correct: boolean; grade: { passed: boolean; checks: Record<string, boolean>; dimensions: Record<string, boolean> }; candidate_row_count: number; expected_row_count: number; candidate_preview: Record<string, unknown>[]; expected_preview: Record<string, unknown>[] }
 export interface EvalCandidateSqlBatch { task_version: string; fixture_id: EvalFixtureId; fixture_hash: string; submission_hash: string; summary: { submitted: number; executed: number; result_correct: number; passed: number }; cases: { task_id: string; execution_success: boolean; execution_error: string | null; result_correct: boolean; passed: boolean; checks: Record<string, boolean>; candidate_row_count: number; expected_row_count: number }[] }
 export interface EvalBenchmarkReadiness { task_version: string; existing: { total: number; approved: number; sql_tasks: number; with_field_constraints: number }; target: { database: string; development: number; development_goal: number; holdout: number; holdout_goal: number; total_goal: number } }

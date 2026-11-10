@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import { api } from "../api"
-import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalCandidateSqlBatch, EvalCandidateSqlCheck, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
+import type { EvalAudit, EvalBenchmarkReadiness, EvalCalibration, EvalCampaign, EvalCandidateSqlBatch, EvalCandidateSqlCheck, EvalComparison, EvalFailureAttribution, EvalFixtureId, EvalHumanDimensionLabels, EvalModelCatalog, EvalReviewCatalog, EvalReviewPreview, EvalRun, EvalRunLabels, EvalRunSummary, EvalTask } from "../api"
 
 const tasks = ref<EvalTask[]>([])
 const benchmarkReadiness = ref<EvalBenchmarkReadiness | null>(null)
@@ -18,6 +18,8 @@ const batchBusy = ref(false)
 const batchError = ref("")
 const selected = ref<string[]>([])
 const runs = ref<EvalRunSummary[]>([])
+const campaigns = ref<EvalCampaign[]>([])
+const campaignError = ref("")
 const current = ref<EvalRun | null>(null)
 const busy = ref(false)
 const cancelBusy = ref(false)
@@ -89,10 +91,11 @@ function watchRun() {
 
 onMounted(async () => {
   try {
-    const [catalog, history, reviewCatalog, models, readiness] = await Promise.all([api.evalCatalog(), api.evalRuns(), api.evalReviews(), api.evalModels(), api.evalBenchmarkReadiness()])
+    const [catalog, history, reviewCatalog, models, readiness, campaignHistory] = await Promise.all([api.evalCatalog(), api.evalRuns(), api.evalReviews(), api.evalModels(), api.evalBenchmarkReadiness(), api.evalCampaigns()])
     tasks.value = catalog.tasks
     selected.value = catalog.tasks.slice(0, 5).map(task => task.id)
     runs.value = history
+    campaigns.value = campaignHistory
     reviews.value = reviewCatalog
     candidateTaskId.value = candidateTaskOptions.value[0]?.id || ""
     benchmarkReadiness.value = readiness
@@ -103,6 +106,12 @@ onMounted(async () => {
     candidateId.value = completed[0]?.id || ""
   } catch (caught) { error.value = String(caught) }
 })
+
+async function refreshCampaigns() {
+  campaignError.value = ""
+  try { campaigns.value = await api.evalCampaigns() }
+  catch (caught) { campaignError.value = String(caught) }
+}
 
 function toggle(id: string) {
   selected.value = selected.value.includes(id) ? selected.value.filter(x => x !== id) : [...selected.value, id]
@@ -471,6 +480,21 @@ function failureLabel(value: EvalFailureAttribution | null) {
     </div>
     <section class="eval-card eval-history"><h2>历史运行</h2><button v-for="run in runs" :key="run.id" @click="openRun(run.id)">{{ run.started_at.slice(0, 19).replace('T', ' ') }} · {{ run.mode }} · {{ run.fixture_id || 'base' }} · {{ run.model }}<span v-if="run.baseline_run_id"> · 候选 ← {{ run.baseline_run_id }}</span> · {{ run.status || 'completed' }} · {{ run.summary.passed }}/{{ run.summary.total }}</button><p v-if="!runs.length">暂无运行记录</p></section>
     <section class="eval-card eval-history">
+      <h2>自动化评测作业</h2>
+      <p>查看命令行分片作业及进度；演示作业仅验证执行流程，不代表模型正确率。</p>
+      <button class="eval-secondary" @click="refreshCampaigns">刷新作业</button>
+      <p v-if="campaignError" class="eval-error">{{ campaignError }}</p>
+      <p v-if="!campaigns.length">暂无作业记录</p>
+      <details v-for="campaign in campaigns" :key="campaign.id" class="eval-campaign">
+        <summary>{{ campaign.id }} · {{ campaign.mode === 'demo' ? '无模型演示' : '真实模型' }} · {{ campaign.status }} · {{ campaign.summary?.completed_tasks ?? 0 }}/{{ campaign.summary?.total_tasks ?? 0 }} 题</summary>
+        <p class="eval-meta">{{ campaign.created_at.slice(0, 19).replace('T', ' ') }} · {{ campaign.fixture_id }} · {{ campaign.trials }} 次试验 · 计划指纹 {{ campaign.plan_hash }}<span v-if="campaign.mode === 'live'"> · 已用远程请求 {{ campaign.summary?.remote_requests_used ?? 0 }}</span></p>
+        <div v-for="(shard, index) in campaign.shards" :key="index" class="eval-campaign-shard">
+          <strong>第 {{ index + 1 }} 片 · {{ shard.status }}</strong><p class="eval-meta">{{ shard.task_ids.join('、') }}</p>
+          <button v-for="runId in shard.run_ids" :key="runId" @click="openRun(runId)">查看运行 {{ runId }}</button>
+        </div>
+      </details>
+    </section>
+    <section class="eval-card eval-history">
       <h2>4 · 回归对比</h2>
       <p>选择同一任务版本、数据、模式、试验次数和判分器版本的两次已完成运行；仅比较共同题目。</p>
       <div class="eval-compare-controls">
@@ -602,4 +626,5 @@ function failureLabel(value: EvalFailureAttribution | null) {
 .eval-provenance{margin:12px 0;color:#566a86;font-size:13px}.eval-provenance summary{cursor:pointer}.eval-provenance pre{white-space:pre-wrap;overflow:auto;background:#f5f7fa;padding:12px;border-radius:8px}
 .eval-review-layout{display:grid;grid-template-columns:minmax(240px,360px) 1fr;gap:20px;margin-top:16px}.eval-review-list{max-height:500px;overflow:auto;border:1px solid #e0e7ef;border-radius:8px}.eval-review-list button{width:100%;display:grid;gap:5px;text-align:left;padding:12px;border:0;border-bottom:1px solid #edf1f5;background:white;cursor:pointer}.eval-review-list button.active{background:#f1f5ff}.eval-review-list small{color:#78879c}.eval-review-detail{min-width:0}.eval-review-detail h3{margin:0 0 10px}.eval-review-detail p{line-height:1.5}.eval-review-detail details{margin:10px 0}.eval-review-detail summary{cursor:pointer;color:#345fe5}.eval-review-detail pre{white-space:pre-wrap;overflow:auto;max-height:300px;background:#f5f7fa;padding:12px;border-radius:8px}.eval-review-note{display:grid;gap:7px;margin:16px 0;color:#63758e}.eval-review-note textarea{width:100%;box-sizing:border-box;border:1px solid #d8e1ec;border-radius:8px;padding:10px;font:inherit}.eval-review-actions{display:flex;gap:10px}.eval-review-actions .eval-cancel{margin-left:0}@media(max-width:1100px){.eval-review-layout{grid-template-columns:1fr}.eval-review-list{max-height:240px}}
 .eval-trace .eval-review-detail{display:grid;gap:9px;margin:12px 0;padding:12px;background:#f6f8fc;border-radius:8px}.eval-trace .eval-review-detail label{display:grid;gap:5px}.eval-trace .eval-review-detail select,.eval-trace .eval-review-detail textarea{width:100%;box-sizing:border-box;border:1px solid #d8e1ec;border-radius:7px;padding:8px;font:inherit}
+.eval-campaign{border-top:1px solid #edf1f5;padding:12px 0}.eval-campaign summary{cursor:pointer;color:#345fe5}.eval-campaign-shard{padding:10px 12px;margin:8px 0;background:#f6f8fc;border-radius:8px}.eval-campaign-shard p{margin:5px 0}.eval-campaign-shard button{padding:5px 0}
 </style>
