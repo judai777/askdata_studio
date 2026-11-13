@@ -205,6 +205,39 @@ class EvalCampaignTests(unittest.TestCase):
                 result = compare_to_baseline("base00000001", "cand00000001", directory=campaign_dir, service=service)
                 self.assertFalse(result["passed"])
                 self.assertEqual(result["regressed"], [TASK_IDS[0]])
+                self.assertEqual(result["variable"], "chat_model")
+                candidate_path = campaign_dir / "cand00000001.json"
+                candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+                candidate_run_path = evaluation.RUN_DIR / f"{candidate['shards'][0]['run_ids'][0]}.json"
+                candidate_run = json.loads(candidate_run_path.read_text(encoding="utf-8"))
+                original_candidate = json.dumps(candidate)
+                original_candidate_run = json.dumps(candidate_run)
+                candidate["plan"]["prompt_variant"] = "time_filter_v1"
+                candidate["plan"]["provenance"]["prompt_variant"] = "time_filter_v1"
+                candidate["plan"]["provenance"]["prompt_hash"] = "new-prompt"
+                candidate["plan"]["provenance"]["config"]["llm_model"] = "model-a"
+                candidate_run["provenance"] = candidate["plan"]["provenance"]
+                candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+                candidate_run_path.write_text(json.dumps(candidate_run), encoding="utf-8")
+                prompt_result = compare_to_baseline("base00000001", "cand00000001", directory=campaign_dir, service=service)
+                self.assertEqual(prompt_result["variable"], "prompt")
+                candidate["plan"]["provenance"]["config"]["llm_model"] = "model-b"
+                candidate_run["provenance"] = candidate["plan"]["provenance"]
+                candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+                candidate_run_path.write_text(json.dumps(candidate_run), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "不能同时改变"):
+                    compare_to_baseline("base00000001", "cand00000001", directory=campaign_dir, service=service)
+                candidate["plan"]["provenance"]["config"]["llm_model"] = "model-a"
+                candidate["plan"]["provenance"]["workflow_hash"] = "changed-workflow"
+                candidate_run["provenance"] = candidate["plan"]["provenance"]
+                candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+                candidate_run_path.write_text(json.dumps(candidate_run), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "工作流版本"):
+                    compare_to_baseline("base00000001", "cand00000001", directory=campaign_dir, service=service)
+                candidate["plan"]["provenance"]["workflow_hash"] = "flow"
+                candidate_path.write_text(original_candidate, encoding="utf-8")
+                candidate_run_path.write_text(original_candidate_run, encoding="utf-8")
+                candidate = json.loads(original_candidate)
                 with TestClient(app) as client:
                     admin = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"}).json()["access_token"]
                     sales = client.post("/api/auth/login", json={"username": "sales", "password": "sales123"}).json()["access_token"]
@@ -212,8 +245,6 @@ class EvalCampaignTests(unittest.TestCase):
                     self.assertEqual(client.post("/api/eval/campaign-baselines", headers={"Authorization": f"Bearer {sales}"}, json={"campaign_id": "base00000001", "fingerprint": source["plan_hash"], "note": "unauthorized"}).status_code, 403)
                     self.assertEqual(client.get("/api/eval/campaign-baselines", headers={"Authorization": f"Bearer {admin}"}).json()[0]["campaign_id"], "base00000001")
                     self.assertEqual(client.get("/api/eval/campaign-gate?baseline=base00000001&candidate=cand00000001", headers={"Authorization": f"Bearer {admin}"}).json(), result)
-                candidate_path = campaign_dir / "cand00000001.json"
-                candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
                 candidate["status"] = "interrupted"
                 candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "已完成"):

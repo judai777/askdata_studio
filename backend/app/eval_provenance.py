@@ -5,6 +5,7 @@ import hashlib
 from typing import Any, Sequence
 
 from .config import BASE_DIR, Settings
+from .eval_prompt_variants import prompt_variant_text
 
 
 PROMPT_SOURCES = (
@@ -56,9 +57,15 @@ def provenance_snapshot(mode: str, config: Settings | None = None) -> dict[str, 
         return {"kind": "demo", "prompt_hash": None, "workflow_hash": None, "config": None}
     if mode != "live" or config is None:
         raise ValueError("实时评测缺少模型配置")
+    variant_text = prompt_variant_text(config.eval_prompt_variant)
+    prompt_digest = hashlib.sha256()
+    prompt_digest.update(source_hash(PROMPT_SOURCES).encode("ascii"))
+    prompt_digest.update(config.eval_prompt_variant.encode("utf-8"))
+    prompt_digest.update(variant_text.encode("utf-8"))
     return {
         "kind": "live",
-        "prompt_hash": source_hash(PROMPT_SOURCES),
+        "prompt_hash": prompt_digest.hexdigest()[:16],
+        "prompt_variant": config.eval_prompt_variant,
         "workflow_hash": source_hash(WORKFLOW_SOURCES),
         "config": {
             "llm_model": config.llm_model,

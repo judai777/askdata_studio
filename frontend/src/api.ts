@@ -88,7 +88,7 @@ export const api = {
     }),
   evalCatalog: () => request<{ version: string; tasks: EvalTask[] }>("/api/eval/catalog"),
   evalCampaigns: () => request<EvalCampaign[]>("/api/eval/campaigns"),
-  evalStartCampaign: (payload: { campaign_id: string; task_ids: string[]; mode: "demo" | "live"; trials: 1 | 3; fixture_id: EvalFixtureId; request_limit?: number; model?: string; allow_remote: boolean; retry_interrupted: boolean }) => request<EvalCampaign>("/api/eval/campaigns", { method: "POST", body: JSON.stringify(payload) }),
+  evalStartCampaign: (payload: { campaign_id: string; task_ids: string[]; mode: "demo" | "live"; trials: 1 | 3; fixture_id: EvalFixtureId; request_limit?: number; model?: string; prompt_variant?: string; allow_remote: boolean; retry_interrupted: boolean }) => request<EvalCampaign>("/api/eval/campaigns", { method: "POST", body: JSON.stringify(payload) }),
   evalCampaignDetail: (id: string) => request<EvalCampaign>(`/api/eval/campaigns/${encodeURIComponent(id)}`),
   evalCampaignBaselines: () => request<EvalCampaignBaseline[]>("/api/eval/campaign-baselines"),
   evalApproveCampaignBaseline: (campaignId: string, fingerprint: string, note: string) => request<EvalCampaignBaseline>("/api/eval/campaign-baselines", { method: "POST", body: JSON.stringify({ campaign_id: campaignId, fingerprint, note }) }),
@@ -116,9 +116,9 @@ export const api = {
 }
 
 export interface EvalTask { id: string; category: string; query: string; route: string; database?: string; kind?: string; required_tables?: string[] }
-export interface EvalCampaign { id: string; created_at: string; status: string; plan_hash: string; mode: "demo" | "live"; trials: number; task_ids: string[]; request_limit: number | null; model: string | null; evaluation_users?: Record<string, string>; fixture_id: string; task_version: string; summary: { total_tasks: number; completed_tasks: number; passed: number; completed_shards: number; total_shards: number; remote_requests_used: number; remote_requests_uncertain: boolean; schema_fields?: EvalSchemaSummary; sql_outcome?: EvalSqlSummary; model_metrics?: EvalMetrics | null } | null; shards: { task_ids: string[]; status: string; run_ids: string[] }[] }
+export interface EvalCampaign { id: string; created_at: string; status: string; plan_hash: string; mode: "demo" | "live"; trials: number; task_ids: string[]; request_limit: number | null; model: string | null; prompt_variant: string; evaluation_users?: Record<string, string>; fixture_id: string; task_version: string; summary: { total_tasks: number; completed_tasks: number; passed: number; completed_shards: number; total_shards: number; remote_requests_used: number; remote_requests_uncertain: boolean; schema_fields?: EvalSchemaSummary; sql_outcome?: EvalSqlSummary; model_metrics?: EvalMetrics | null } | null; shards: { task_ids: string[]; status: string; run_ids: string[] }[] }
 export interface EvalCampaignBaseline { campaign_id: string; plan_hash: string; approved_at: string; reviewer: string; note: string; task_count: number; passed: number; passed_task_ids: string[] }
-export interface EvalCampaignGate { baseline_id: string; candidate_id: string; passed: boolean; task_count: number; baseline_passed: number; candidate_passed: number; regressed: string[]; improved: string[] }
+export interface EvalCampaignGate { baseline_id: string; candidate_id: string; passed: boolean; task_count: number; baseline_passed: number; candidate_passed: number; regressed: string[]; improved: string[]; variable: "prompt" | "chat_model" | "repeat" }
 export interface EvalCandidateSqlCheck { task_id: string; fixture_id: EvalFixtureId; fixture_hash: string; execution_success: boolean; execution_error: string | null; result_correct: boolean; grade: { passed: boolean; checks: Record<string, boolean>; dimensions: Record<string, boolean> }; candidate_row_count: number; expected_row_count: number; candidate_preview: Record<string, unknown>[]; expected_preview: Record<string, unknown>[] }
 export interface EvalCandidateSqlBatch { task_version: string; fixture_id: EvalFixtureId; fixture_hash: string; submission_hash: string; summary: { submitted: number; executed: number; result_correct: number; passed: number }; cases: { task_id: string; execution_success: boolean; execution_error: string | null; result_correct: boolean; passed: boolean; checks: Record<string, boolean>; candidate_row_count: number; expected_row_count: number }[] }
 export interface EvalBenchmarkReadiness { task_version: string; existing: { total: number; approved: number; sql_tasks: number; with_field_constraints: number }; target: { database: string; development: number; development_goal: number; holdout: number; holdout_goal: number; total_goal: number } }
@@ -141,7 +141,7 @@ export interface EvalStageMetric { stage: string; calls: number; failures: numbe
 export interface EvalFailureAttribution { kind: "stage" | "grader" | "runner"; stage: string | null; failed_checks: string[]; trial?: number }
 export interface EvalFailureCount { kind: EvalFailureAttribution["kind"]; stage: string | null; count: number }
 export interface EvalRequestBudget { limit: number; used: number; exhausted: boolean }
-export interface EvalModelCatalog { default: string; models: string[]; api_key_configured: boolean }
+export interface EvalModelCatalog { default: string; models: string[]; prompt_variants: { id: string; hash: string }[]; api_key_configured: boolean }
 export type EvalHumanLabel = "pass" | "fail" | "unsure"
 export interface EvalHumanDimensionLabels { completion: EvalHumanLabel; safety: EvalHumanLabel; process: EvalHumanLabel; report_quality: EvalHumanLabel }
 export interface EvalHumanLabelRecord { fingerprint: string; labels: EvalHumanDimensionLabels; note: string; reviewer: string; reviewed_at: string }

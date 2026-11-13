@@ -592,7 +592,7 @@ class EvaluationService:
 
     @staticmethod
     def _live_service(config: Settings) -> AskDataService:
-        if config.llm_model == settings.llm_model:
+        if config == settings:
             return AskDataService()
         client = ModelClient(config)
         return AskDataService(model_client=client, schema_index=SchemaIndex(client, config))

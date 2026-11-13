@@ -36,6 +36,7 @@ const trials = ref<1 | 3>(1)
 const requestLimit = ref<20 | 50 | 100>(50)
 const modelCatalog = ref<EvalModelCatalog | null>(null)
 const selectedModel = ref("")
+const selectedPromptVariant = ref("default")
 const fixtureId = ref<EvalFixtureId>("base")
 const smokeTaskIds = ["mock.target_comparison", "grain.unique_customers", "time.july_august"]
 const smokeReady = computed(() => smokeTaskIds.every(id => reviews.value?.tasks.some(item => item.task_id === id && item.status === "approved")))
@@ -129,6 +130,7 @@ async function startCampaign(existing?: EvalCampaign) {
   const campaignTrials = (existing?.trials || trials.value) as 1 | 3
   const campaignFixture = (existing?.fixture_id || fixtureId.value) as EvalFixtureId
   const campaignModel = existing?.model || selectedModel.value
+  const campaignPromptVariant = existing?.prompt_variant || (campaignMode === 'live' ? selectedPromptVariant.value : 'default')
   const campaignLimit = existing?.request_limit ?? requestLimit.value
   if (!taskIds.length || taskIds.length > 50) { campaignError.value = "作业请选择 1–50 题"; return }
   if (!existing) {
@@ -139,13 +141,14 @@ async function startCampaign(existing?: EvalCampaign) {
     try { reviews.value = await api.evalReviews() }
     catch (caught) { campaignError.value = `无法核对审核状态：${String(caught)}`; return }
     if (taskIds.some(id => !reviews.value?.tasks.some(item => item.task_id === id && item.status === 'approved'))) { campaignError.value = "真实作业只接受已审核通过的题目"; return }
-    if (!window.confirm(`${existing ? '续跑' : '启动'}真实模型作业：${taskIds.length} 题，${campaignTrials} 次独立试验，Chat 模型 ${campaignModel}，整个作业最多 ${campaignLimit} 次远程 HTTP 请求（含重试）。${existing ? '未完成片可能重复发送请求。' : ''}可能产生 API 费用。继续吗？`)) return
+    if (!window.confirm(`${existing ? '续跑' : '启动'}真实模型作业：${taskIds.length} 题，${campaignTrials} 次独立试验，Chat 模型 ${campaignModel}，Prompt 版本 ${campaignPromptVariant}，整个作业最多 ${campaignLimit} 次远程 HTTP 请求（含重试）。${existing ? '未完成片可能重复发送请求。' : ''}可能产生 API 费用。继续吗？`)) return
   }
   campaignBusy.value = true
   try {
     const started = await api.evalStartCampaign({ campaign_id: existing?.id || crypto.randomUUID().replaceAll('-', '').slice(0, 12), task_ids: taskIds,
       mode: campaignMode, trials: campaignTrials, fixture_id: campaignFixture,
       request_limit: campaignMode === 'live' ? campaignLimit : undefined, model: campaignMode === 'live' ? campaignModel : undefined,
+      prompt_variant: campaignPromptVariant,
       allow_remote: campaignMode === 'live', retry_interrupted: Boolean(existing && campaignMode === 'live') })
     campaigns.value = [started, ...campaigns.value.filter(item => item.id !== started.id)]
     await refreshCampaigns()
@@ -163,6 +166,24 @@ async function approveCampaignBaseline(campaign: EvalCampaign) {
     campaignBaselines.value = await api.evalCampaignBaselines()
     campaignBaselineId.value = campaign.id
     campaignBaselineNote.value = ""
+  } catch (caught) { campaignError.value = String(caught) }
+  finally { campaignBusy.value = false }
+}
+
+async function startPromptCandidate(baseline: EvalCampaign) {
+  campaignError.value = ""
+  if (!baseline.request_limit || !baseline.model) { campaignError.value = "基线缺少远程请求预算或模型"; return }
+  if (selectedPromptVariant.value === (baseline.prompt_variant || 'default')) { campaignError.value = "请选择与基线不同的 Prompt 版本"; return }
+  if (!window.confirm(`以已批准作业 ${baseline.id} 为基线创建 Prompt 候选：固定 ${baseline.task_ids.length} 题、${baseline.trials} 次试验、${baseline.fixture_id} 数据、Chat 模型 ${baseline.model} 和 ${baseline.request_limit} 次远程请求上限；仅改用 Prompt ${selectedPromptVariant.value}。可能产生 API 费用。继续吗？`)) return
+  campaignBusy.value = true
+  try {
+    const started = await api.evalStartCampaign({ campaign_id: crypto.randomUUID().replaceAll('-', '').slice(0, 12), task_ids: baseline.task_ids,
+      mode: 'live', trials: baseline.trials as 1 | 3, fixture_id: baseline.fixture_id as EvalFixtureId,
+      request_limit: baseline.request_limit, model: baseline.model, prompt_variant: selectedPromptVariant.value,
+      allow_remote: true, retry_interrupted: false })
+    campaignBaselineId.value = baseline.id
+    campaignCandidateId.value = started.id
+    await refreshCampaigns()
   } catch (caught) { campaignError.value = String(caught) }
   finally { campaignBusy.value = false }
 }
@@ -544,13 +565,14 @@ function failureLabel(value: EvalFailureAttribution | null) {
     <section class="eval-card eval-history">
       <h2>自动化评测作业</h2>
       <p>按上方选题和运行配置发起分片作业，单次可选 1–50 题；演示作业仅验证执行流程，不代表模型正确率。</p>
+      <label v-if="modelCatalog">作业 Prompt 版本 <select v-model="selectedPromptVariant"><option v-for="variant in modelCatalog.prompt_variants || []" :key="variant.id" :value="variant.id">{{ variant.id }} · {{ variant.hash }}</option></select></label>
       <button class="eval-secondary" :disabled="campaignBusy || !selected.length" @click="startCampaign()">{{ campaignBusy ? '正在启动…' : '按当前配置创建作业' }}</button>
       <button class="eval-secondary" @click="refreshCampaigns">刷新作业</button>
       <p v-if="campaignError" class="eval-error">{{ campaignError }}</p>
       <p v-if="!campaigns.length">暂无作业记录</p>
       <details v-for="campaign in campaigns" :key="campaign.id" class="eval-campaign">
         <summary>{{ campaign.id }} · {{ campaign.mode === 'demo' ? '无模型演示' : '真实模型' }} · {{ campaign.status }} · {{ campaign.summary?.completed_tasks ?? 0 }}/{{ campaign.summary?.total_tasks ?? 0 }} 题</summary>
-        <p class="eval-meta">{{ campaign.created_at.slice(0, 19).replace('T', ' ') }} · {{ campaign.fixture_id }} · {{ campaign.trials }} 次试验 · 计划指纹 {{ campaign.plan_hash }}<span v-if="campaign.mode === 'live'"> · {{ campaign.summary?.remote_requests_uncertain ? '远程请求数未知' : `已用远程请求 ${campaign.summary?.remote_requests_used ?? 0}` }}</span></p>
+        <p class="eval-meta">{{ campaign.created_at.slice(0, 19).replace('T', ' ') }} · {{ campaign.fixture_id }} · {{ campaign.trials }} 次试验 · Prompt {{ campaign.prompt_variant || 'default' }} · 计划指纹 {{ campaign.plan_hash }}<span v-if="campaign.mode === 'live'"> · {{ campaign.summary?.remote_requests_uncertain ? '远程请求数未知' : `已用远程请求 ${campaign.summary?.remote_requests_used ?? 0}` }}</span></p>
         <p v-if="campaign.evaluation_users" class="eval-meta">评测身份：{{ [...new Set(Object.values(campaign.evaluation_users))].join('、') }}</p>
         <p v-if="campaign.summary?.remote_requests_uncertain" class="eval-error">历史运行的实际远程请求数无法确认；请创建新作业，不要续跑本作业。</p>
         <p v-if="campaign.mode === 'live' && campaign.summary?.schema_fields" class="eval-meta">字段级 Schema：有效试验 {{ campaign.summary.schema_fields.labeled_tasks }}，宏平均召回 {{ formatAgreement(campaign.summary.schema_fields.macro_recall) }}；SQL 结果正确 {{ campaign.summary.sql_outcome?.result_correct ?? 0 }}/{{ campaign.summary.sql_outcome?.attempts ?? 0 }} 次；模型调用 {{ campaign.summary.model_metrics?.model_calls ?? 0 }} 次</p>
@@ -560,6 +582,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
           <button class="eval-secondary" :disabled="campaignBusy" @click="approveCampaignBaseline(campaign)">人工批准为基线</button>
         </div>
         <p v-if="campaignBaselines.some(item => item.campaign_id === campaign.id)" class="eval-meta">已人工批准为基线</p>
+        <button v-if="campaignBaselines.some(item => item.campaign_id === campaign.id)" class="eval-secondary" :disabled="campaignBusy" @click="startPromptCandidate(campaign)">以此基线创建 Prompt 候选（{{ selectedPromptVariant }}）</button>
         <div v-for="(shard, index) in campaign.shards" :key="index" class="eval-campaign-shard">
           <strong>第 {{ index + 1 }} 片 · {{ shard.status }}</strong><p class="eval-meta">{{ shard.task_ids.join('、') }}</p>
           <button v-for="runId in shard.run_ids" :key="runId" @click="openRun(runId)">查看运行 {{ runId }}</button>
@@ -570,7 +593,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <label>候选作业<select v-model="campaignCandidateId"><option value="">选择候选</option><option v-for="item in campaigns.filter(campaign => campaign.mode === 'live' && campaign.status === 'completed')" :key="item.id" :value="item.id">{{ item.id }} · {{ item.model }}</option></select></label>
         <button class="eval-secondary" @click="compareCampaigns">检查逐题回归门槛</button>
       </div>
-      <p v-if="campaignGate" :class="campaignGate.passed ? 'pass' : 'fail'">{{ campaignGate.passed ? '门槛通过' : '门槛未通过' }} · 基线 {{ campaignGate.baseline_passed }}/{{ campaignGate.task_count }} · 候选 {{ campaignGate.candidate_passed }}/{{ campaignGate.task_count }} · 退化 {{ campaignGate.regressed.join('、') || '无' }} · 改善 {{ campaignGate.improved.join('、') || '无' }}</p>
+      <p v-if="campaignGate" :class="campaignGate.passed ? 'pass' : 'fail'">{{ campaignGate.passed ? '门槛通过' : '门槛未通过' }} · 变量 {{ campaignGate.variable === 'prompt' ? 'Prompt' : campaignGate.variable === 'chat_model' ? 'Chat 模型' : '重复运行' }} · 基线 {{ campaignGate.baseline_passed }}/{{ campaignGate.task_count }} · 候选 {{ campaignGate.candidate_passed }}/{{ campaignGate.task_count }} · 退化 {{ campaignGate.regressed.join('、') || '无' }} · 改善 {{ campaignGate.improved.join('、') || '无' }}</p>
     </section>
     <section class="eval-card eval-history">
       <h2>4 · 回归对比</h2>

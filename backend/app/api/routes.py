@@ -38,6 +38,7 @@ class EvalRunRequest(BaseModel):
 
 class EvalCampaignRequest(EvalRunRequest):
     campaign_id: str
+    prompt_variant: str = "default"
     allow_remote: StrictBool = False
     retry_interrupted: StrictBool = False
 
@@ -111,6 +112,7 @@ def eval_start_campaign(payload: EvalCampaignRequest, _: AuthUser = Depends(requ
         return campaign_manager.start(payload.campaign_id, payload.task_ids, mode=payload.mode,
                                       trials=payload.trials, fixture_id=payload.fixture_id,
                                       request_limit=payload.request_limit, model=payload.model,
+                                      prompt_variant=payload.prompt_variant,
                                       allow_remote=payload.allow_remote,
                                       retry_interrupted=payload.retry_interrupted)
     except ValueError as error:

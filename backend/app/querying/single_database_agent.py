@@ -8,6 +8,7 @@ from typing import Any, Callable
 from ..errors import PipelineStageError
 from ..mcp_runtime.client import LocalMcpClient
 from ..model_client import ModelClient
+from ..eval_prompt_variants import prompt_variant_text
 from ..skills import SkillDefinition
 
 
@@ -20,11 +21,13 @@ class SingleDatabaseAgent:
         mcp_client_factory: Callable[[dict[str, Any]], LocalMcpClient],
         skill: SkillDefinition,
         max_tool_calls: int = 3,
+        prompt_variant: str | None = None,
     ) -> None:
         self.model_client = model_client
         self.mcp_client_factory = mcp_client_factory
         self.skill = skill
         self.max_tool_calls = min(max_tool_calls, skill.max_tool_calls)
+        self.prompt_variant = prompt_variant or getattr(getattr(model_client, "config", None), "eval_prompt_variant", "default")
 
     def prepare(
         self,
@@ -55,6 +58,9 @@ class SingleDatabaseAgent:
             )
 
         system = f"你是单数据库问数智能体。\n\n{self.skill.instructions}"
+        addition = prompt_variant_text(self.prompt_variant)
+        if addition:
+            system += f"\n\n{addition}"
 
         observations: list[dict[str, Any]] = []
         tool_trace: list[dict[str, Any]] = []

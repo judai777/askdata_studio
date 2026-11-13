@@ -6,6 +6,7 @@ import re
 from dataclasses import replace
 
 from .config import Settings, settings
+from .eval_prompt_variants import prompt_variant_catalog, prompt_variant_text
 
 
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,79}\Z")
@@ -19,15 +20,16 @@ def allowed_models() -> list[str]:
 
 
 def model_catalog() -> dict[str, object]:
-    return {"default": settings.llm_model, "models": allowed_models(), "api_key_configured": bool(settings.api_key)}
+    return {"default": settings.llm_model, "models": allowed_models(), "prompt_variants": prompt_variant_catalog(), "api_key_configured": bool(settings.api_key)}
 
 
-def resolve_model(mode: str, model: str | None) -> Settings | None:
+def resolve_model(mode: str, model: str | None, prompt_variant: str = "default") -> Settings | None:
     if mode == "demo":
-        if model is not None:
-            raise ValueError("离线演示不能选择远程模型")
+        if model is not None or prompt_variant != "default":
+            raise ValueError("离线演示不能选择远程模型或 Prompt 版本")
         return None
+    prompt_variant_text(prompt_variant)
     selected = model or settings.llm_model
     if selected not in allowed_models():
         raise ValueError("远程模型未登记在评测白名单中")
-    return replace(settings, llm_model=selected)
+    return replace(settings, llm_model=selected, eval_prompt_variant=prompt_variant)

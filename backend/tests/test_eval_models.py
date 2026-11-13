@@ -1,17 +1,34 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from app.config import Settings, settings
 from app.eval_models import allowed_models, resolve_model
+from app.eval_prompt_variants import prompt_variant_text
+from app.eval_provenance import provenance_snapshot
 from app.evaluation import EvaluationService
 from app.main import app
+from app.querying.single_database_agent import SingleDatabaseAgent
 
 
 class EvalModelTest(unittest.TestCase):
+    def test_prompt_variant_only_changes_single_database_agent_system_message(self) -> None:
+        systems: list[str] = []
+        model = SimpleNamespace(chat_json=lambda system, _payload: (systems.append(system), {"action": "call_tool", "tool_name": "query_askdata_mock", "arguments": {}})[1])
+        mcp = SimpleNamespace(list_tools=lambda: [{"name": "query_askdata_mock"}], call_tool=lambda *_args: {"success": True})
+        skill = SimpleNamespace(instructions="基础规则", allowed_tools=["query_*"], max_tool_calls=3, output_actions=["call_tool"])
+        for variant in ("default", "time_filter_v1"):
+            agent = SingleDatabaseAgent(model, lambda _scope: mcp, skill, prompt_variant=variant)
+            self.assertEqual(agent.prepare("统计销售额", "askdata_mock", {}, "", {}, {}, {})["action"], "executed")
+        self.assertNotIn("逐项核对", systems[0])
+        self.assertIn("逐项核对", systems[1])
+
     def test_allowlist_and_mode_validation(self) -> None:
         with patch.dict("os.environ", {"EVAL_LLM_MODELS": "candidate-a,candidate-b,candidate-a"}):
             self.assertEqual(allowed_models(), list(dict.fromkeys([settings.llm_model, "candidate-a", "candidate-b"])))
@@ -19,6 +36,12 @@ class EvalModelTest(unittest.TestCase):
             self.assertEqual(chosen.llm_model, "candidate-b")
             self.assertEqual(chosen.embedding_model, settings.embedding_model)
             self.assertEqual(chosen.api_key, settings.api_key)
+            prompted = resolve_model("live", "candidate-b", "time_filter_v1")
+            self.assertEqual(prompted.eval_prompt_variant, "time_filter_v1")
+            self.assertNotEqual(provenance_snapshot("live", chosen)["prompt_hash"], provenance_snapshot("live", prompted)["prompt_hash"])
+            self.assertIn("时间范围", prompt_variant_text("time_filter_v1"))
+            with self.assertRaisesRegex(ValueError, "Prompt 版本"):
+                resolve_model("live", "candidate-b", "unknown")
             with self.assertRaisesRegex(ValueError, "未登记"):
                 resolve_model("live", "other-model")
             with self.assertRaisesRegex(ValueError, "离线演示"):
@@ -35,6 +58,13 @@ class EvalModelTest(unittest.TestCase):
         self.assertEqual(run["model"], "candidate-a")
         self.assertEqual(run["provenance"]["config"]["llm_model"], "candidate-a")
         self.assertEqual(settings.llm_model, resolve_model("live", None).llm_model)
+
+    def test_default_chat_model_still_uses_selected_prompt_variant(self) -> None:
+        config = Settings(api_key="test-key", llm_model=settings.llm_model, eval_prompt_variant="time_filter_v1")
+        with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.RUN_DIR", Path(directory)):
+            run = EvaluationService().run("live", ["guard.restricted_database"], request_limit=1, model_config=config)
+        self.assertEqual(run["provenance"]["prompt_variant"], "time_filter_v1")
+        self.assertEqual(run["request_budget"]["used"], 0)
 
     def test_queued_run_freezes_selected_model(self) -> None:
         config = Settings(api_key="test-key", llm_model="candidate-a")

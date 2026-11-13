@@ -40,6 +40,8 @@ def _cases(campaign: dict[str, Any], service: evaluation.EvaluationService) -> d
         run_source = run.get("provenance") or {}
         if run_source.get("prompt_hash") != plan["provenance"].get("prompt_hash") or run_source.get("workflow_hash") != plan["provenance"].get("workflow_hash"):
             raise ValueError("作业关联运行的实现来源不一致")
+        if run_source.get("prompt_variant", "default") != plan.get("prompt_variant", "default"):
+            raise ValueError("作业关联运行的 Prompt 版本不一致")
         if (run_source.get("config") or {}).get("llm_model") != (plan["provenance"].get("config") or {}).get("llm_model"):
             raise ValueError("作业关联运行的模型不一致")
         if set(run.get("task_ids", [])) != set(shard["task_ids"]) or len(run.get("cases", [])) != len(shard["task_ids"]):
@@ -106,11 +108,18 @@ def compare_to_baseline(baseline_id: str, candidate_id: str, *, directory: Path 
         if before.get(key) != after.get(key):
             raise ValueError("候选作业的题目、数据、判分或预算条件与基线不一致")
     base_source, candidate_source = before.get("provenance") or {}, after.get("provenance") or {}
-    if base_source.get("prompt_hash") != candidate_source.get("prompt_hash") or base_source.get("workflow_hash") != candidate_source.get("workflow_hash"):
-        raise ValueError("候选作业的提示词或工作流版本与基线不一致")
+    if base_source.get("workflow_hash") != candidate_source.get("workflow_hash"):
+        raise ValueError("候选作业的工作流版本与基线不一致")
     base_config, candidate_config = base_source.get("config") or {}, candidate_source.get("config") or {}
     if not base_config or not candidate_config or {k: v for k, v in base_config.items() if k != "llm_model"} != {k: v for k, v in candidate_config.items() if k != "llm_model"}:
         raise ValueError("候选作业的非 Chat 模型配置与基线不一致")
+    model_changed = base_config.get("llm_model") != candidate_config.get("llm_model")
+    prompt_changed = (base_source.get("prompt_hash") != candidate_source.get("prompt_hash")
+                      or before.get("prompt_variant", "default") != after.get("prompt_variant", "default"))
+    if model_changed and prompt_changed:
+        raise ValueError("一次对比只能改变 Chat 模型或 Prompt，不能同时改变")
+    if candidate_source.get("prompt_variant", "default") != after.get("prompt_variant", "default"):
+        raise ValueError("候选作业的 Prompt 版本与运行来源不一致")
     service = service or evaluation.EvaluationService()
     baseline_cases = _cases(baseline, service)
     if sorted(task_id for task_id, passed in baseline_cases.items() if passed) != approved["passed_task_ids"]:
@@ -123,4 +132,5 @@ def compare_to_baseline(baseline_id: str, candidate_id: str, *, directory: Path 
         "passed": not regressed, "task_count": len(baseline_cases),
         "baseline_passed": sum(baseline_cases.values()), "candidate_passed": sum(candidate_cases.values()),
         "regressed": regressed, "improved": improved,
+        "variable": "prompt" if prompt_changed else "chat_model" if model_changed else "repeat",
     }

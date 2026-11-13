@@ -68,6 +68,7 @@ class Settings:
     )
     context_table_row_limit: int = int(os.getenv("CONTEXT_TABLE_ROW_LIMIT", "50"))
     route_context_turns: int = int(os.getenv("ROUTE_CONTEXT_TURNS", "6"))
+    eval_prompt_variant: str = "default"
 
     @property
     def session_archive_file(self) -> Path:
