@@ -17,6 +17,10 @@ class SchemaMetricTests(unittest.TestCase):
         self.assertEqual((first["target_count"], first["retrieved_count"], first["matched_count"]), (2, 2, 1))
         self.assertEqual((first["recall"], first["precision"]), (0.5, 0.5))
         self.assertEqual(first["missing"], ["ecommerce_ops.customers.customer_id"])
+        qualified = score_schema_fields(["ecommerce_ops.orders.customer_id"], [hit("ecommerce_ops", "ecommerce_ops.orders", "customer_id")])
+        self.assertEqual((qualified["recall"], qualified["precision"]), (1.0, 1.0))
+        with self.assertRaisesRegex(ValueError, "数据库、表和字段名"):
+            score_schema_fields(["ecommerce_ops.orders.customer_id"], [hit("ecommerce_ops", "other_db.orders", "customer_id")])
         second = score_schema_fields(["ecommerce_ops.orders.customer_id"], [])
         self.assertEqual((second["recall"], second["precision"]), (0.0, 0.0))
         self.assertIsNone(score_schema_fields(None, []))

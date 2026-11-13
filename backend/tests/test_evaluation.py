@@ -11,15 +11,37 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.evaluation import EvaluationService, _fixture_hash, _rows_equal, aggregate_metrics, aggregate_stages, attribute_failure, attempt_metrics, combine_attempts, compare_records, failure_summary, fixture_engine, grade, oracle_sql, task_catalog
+from app.evaluation import EvaluationService, _fixture_hash, _rows_equal, aggregate_metrics, aggregate_stages, attribute_failure, attempt_metrics, combine_attempts, compare_records, evaluation_user_id, failure_summary, fixture_engine, grade, oracle_sql, task_catalog
 from app.eval_provenance import provenance_snapshot
 from app.eval_export import export_report
-from app.model_client import ModelRequestBudgetExceeded
+from app.model_client import ModelClient, ModelRequestBudgetExceeded
 from app.config import Settings
 from app.main import app
 
 
 class EvaluationTest(unittest.TestCase):
+    def test_real_mcp_trace_safety_accepts_read_only_same_database(self) -> None:
+        service = EvaluationService()
+        task = next(item for item in service.catalog()["tasks"] if item["id"] == "mock.region_sales")
+        sql = oracle_sql(task["id"])
+        result = {"route": "database_query", "status": "completed", "sql": sql,
+                  "rows": service._oracle(task), "tool_calls": [{"database": "askdata_mock", "sql": sql, "success": True}]}
+        self.assertTrue(grade(task, result, service._oracle(task))["checks"]["safety"])
+        for call in ({"database": "ecommerce_ops", "sql": sql, "success": True},
+                     {"database": "askdata_mock", "sql": "DELETE FROM orders_current", "success": True},
+                     {"database": "askdata_mock", "sql": sql, "success": False}):
+            self.assertFalse(grade(task, {**result, "tool_calls": [call]}, service._oracle(task))["checks"]["safety"])
+
+    def test_live_task_uses_database_scoped_analyst_identity(self) -> None:
+        tasks = {task["id"]: task for task in EvaluationService().catalog()["tasks"]}
+        calls = []
+        service = SimpleNamespace(submit=lambda query, session, user_id: (calls.append(user_id), SimpleNamespace(model_dump=lambda **_kw: {"status": "completed"}))[1])
+        runner = EvaluationService()
+        runner._execute_case(tasks["mock.region_sales"], "live", service, "session-one", [])
+        runner._execute_case(tasks["commerce.august_completed_sales"], "live", service, "session-two", [])
+        self.assertEqual(calls, ["demo_analyst", "demo_current_sales"])
+        self.assertEqual(evaluation_user_id(tasks["guard.restricted_database"]), tasks["guard.restricted_database"]["user_id"])
+
     def test_candidate_batch_reports_mixed_results_without_sql(self) -> None:
         service = EvaluationService()
         ids = ["mock.region_sales", "metric.paid_vs_list"]
@@ -253,12 +275,27 @@ class EvaluationTest(unittest.TestCase):
             run = service.run("live", ["mock.region_sales", "metric.paid_vs_list"], request_limit=1)
         self.assertEqual(run["status"], "budget_exhausted")
         self.assertEqual(calls, ["mock.region_sales"])
-        self.assertEqual(run["request_budget"], {"limit": 1, "used": 1, "exhausted": True})
+        self.assertEqual(run["request_budget"], {"limit": 1, "used": 1, "exhausted": True, "tracked": True})
         self.assertEqual(run["progress"]["completed_attempts"], 1)
         self.assertEqual(len(run["cases"]), 1)
         self.assertEqual(service.export(run["id"])["request_budget"]["used"], 1)
         with self.assertRaisesRegex(ValueError, "不能重放"):
             service.get_run(run["id"], replay=True)
+
+    def test_reserved_remote_request_survives_scoring_exception(self) -> None:
+        config = Settings(api_key="test-secret-key", llm_model="test-chat")
+        model = ModelClient(config)
+        fake = SimpleNamespace(config=config, model_client=model, workflow=SimpleNamespace(database_engine=None, stage_telemetry=[]))
+        service = EvaluationService()
+        def execute(*_args, **_kwargs):
+            model._reserve_request()
+            raise RuntimeError("simulated model failure")
+        with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.RUN_DIR", Path(directory)):
+            with patch("app.evaluation.AskDataService", return_value=fake), patch.object(service, "_execute_case", side_effect=execute), patch("app.evaluation.score_attempt_fields", side_effect=ValueError("simulated scoring failure")):
+                with self.assertRaisesRegex(ValueError, "simulated scoring failure"):
+                    service.run("live", ["mock.region_sales"], request_limit=2)
+            saved = json.loads(next(Path(directory).glob("*.json")).read_text(encoding="utf-8"))
+            self.assertEqual(saved["request_budget"], {"limit": 2, "used": 1, "exhausted": False, "tracked": True})
 
     def test_request_budget_api_validation(self) -> None:
         service = EvaluationService()

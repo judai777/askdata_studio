@@ -31,6 +31,8 @@ def _cases(campaign: dict[str, Any], service: evaluation.EvaluationService) -> d
         for key in ("task_version", "oracle_hash", "grader_hash", "field_targets_hash"):
             if run.get(key) != plan.get(key):
                 raise ValueError("作业关联运行的评测版本不一致")
+        if run.get("evaluation_users") != {task_id: plan["evaluation_users"][task_id] for task_id in shard["task_ids"]}:
+            raise ValueError("作业关联运行的评测身份不一致")
         if run.get("fixture_id") != plan["fixture_id"] or run.get("trials") != plan["trials"]:
             raise ValueError("作业关联运行的实验条件不一致")
         if run.get("fixture_hash") != plan["fixture_hash"]:
@@ -100,7 +102,7 @@ def compare_to_baseline(baseline_id: str, candidate_id: str, *, directory: Path 
         raise ValueError("批准的基线指纹与当前记录不一致")
     before, after = baseline["plan"], candidate["plan"]
     for key in ("task_ids", "mode", "trials", "fixture_id", "fixture_hash", "task_version",
-                "oracle_hash", "grader_hash", "field_targets_hash", "request_limit"):
+                "oracle_hash", "grader_hash", "field_targets_hash", "request_limit", "evaluation_users"):
         if before.get(key) != after.get(key):
             raise ValueError("候选作业的题目、数据、判分或预算条件与基线不一致")
     base_source, candidate_source = before.get("provenance") or {}, after.get("provenance") or {}

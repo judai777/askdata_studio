@@ -35,6 +35,7 @@ def _save(path: Path, record: dict[str, Any]) -> None:
 def _summary(record: dict[str, Any], service: evaluation.EvaluationService) -> dict[str, Any]:
     completed = []
     used = 0
+    uncertain = False
     for shard in record["shards"]:
         latest = None
         for run_id in shard["run_ids"]:
@@ -42,7 +43,10 @@ def _summary(record: dict[str, Any], service: evaluation.EvaluationService) -> d
                 run = service.get_run(run_id)
             except FileNotFoundError:
                 continue
-            used += (run.get("request_budget") or {}).get("used", 0)
+            budget = run.get("request_budget") or {}
+            used += budget.get("used", 0)
+            if record["plan"]["mode"] == "live" and run.get("status") != "completed" and not budget.get("tracked"):
+                uncertain = True
             latest = run
         if latest and latest.get("status") == "completed":
             completed.append(latest)
@@ -54,6 +58,7 @@ def _summary(record: dict[str, Any], service: evaluation.EvaluationService) -> d
         "completed_shards": len(completed),
         "total_shards": len(record["shards"]),
         "remote_requests_used": used if record["plan"]["mode"] == "live" else 0,
+        "remote_requests_uncertain": uncertain,
     }
     if record["plan"]["mode"] == "live":
         attempts = [attempt for run in completed for case in run.get("cases", []) for attempt in case.get("attempts", [])]
@@ -100,6 +105,7 @@ def _build_plan(campaign_id: str, task_ids: list[str], mode: str, trials: int, f
         "fixture_hash": fixture_hash, "task_version": catalog["version"],
         "oracle_hash": evaluation._oracle_hash(), "grader_hash": grader_hash(),
         "field_targets_hash": field_hash, "request_limit": request_limit,
+        "evaluation_users": {task["id"]: evaluation.evaluation_user_id(task) for task in tasks},
         "provenance": provenance_snapshot(mode, config),
     }
     return plan, chunks, tasks
@@ -162,6 +168,10 @@ def _run_campaign_unlocked(
             _summary(record, service)
             _save(path, record)
             return record
+        if previous and mode == "live" and not (previous.get("request_budget") or {}).get("tracked"):
+            record["status"] = "budget_uncertain"
+            _save(path, record)
+            raise ValueError("旧中断片的远程请求数不可确认，不能续跑；请使用新作业 ID")
         if previous and mode == "live" and not retry_interrupted:
             record["status"] = "interrupted"
             _save(path, record)
@@ -222,6 +232,7 @@ def _public_campaign(record: dict[str, Any], *, status: str | None = None) -> di
         "mode": plan["mode"], "trials": plan["trials"],
         "task_ids": plan["task_ids"], "request_limit": plan["request_limit"],
         "model": (plan.get("provenance", {}).get("config") or {}).get("llm_model"),
+        "evaluation_users": plan.get("evaluation_users"),
         "fixture_id": plan["fixture_id"], "task_version": plan["task_version"],
         "summary": record.get("summary"),
         "shards": [
@@ -237,6 +248,8 @@ def get_campaign(campaign_id: str, directory: Path | None = None) -> dict[str, A
     root = directory or evaluation.RUN_DIR / "_campaigns"
     path = root / f"{campaign_id}.json"
     record = json.loads(path.read_text(encoding="utf-8"))
+    if record["plan"]["mode"] == "live" and record["status"] in {"failed", "interrupted", "budget_uncertain"}:
+        _summary(record, evaluation.EvaluationService())
     status = record["status"]
     if status in {"queued", "running"} and campaign_manager._active_id != campaign_id:
         lock_path = root / f"{campaign_id}.lock"
@@ -290,6 +303,10 @@ class CampaignManager:
                 _save(path, record)
                 return _public_campaign(record)
             incomplete = next(shard for shard in record["shards"] if shard["status"] != "completed")
+            if mode == "live" and incomplete["run_ids"]:
+                previous = service.get_run(incomplete["run_ids"][-1])
+                if not (previous.get("request_budget") or {}).get("tracked"):
+                    raise ValueError("旧中断片的远程请求数不可确认，不能续跑；请使用新作业 ID")
             if mode == "live" and incomplete["run_ids"] and not retry_interrupted:
                 raise ValueError("实时未完成片可能重复发送请求，请确认后重试")
             self._active_id = campaign_id

@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from .config import Settings, settings
 
@@ -29,6 +29,7 @@ class ModelClient:
         self.request_count = 0
         self.request_budget_exhausted = False
         self._budget_lock = Lock()
+        self.on_request_reserved: Callable[[int], None] | None = None
 
     def configure_request_budget(self, limit: int) -> None:
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -44,6 +45,9 @@ class ModelClient:
                 self.request_budget_exhausted = True
                 raise ModelRequestBudgetExceeded("远程请求预算已耗尽")
             self.request_count += 1
+            count = self.request_count
+        if self.on_request_reserved:
+            self.on_request_reserved(count)
 
     @property
     def enabled(self) -> bool:

@@ -49,7 +49,7 @@ class EvalCampaignTests(unittest.TestCase):
                 first_run_id = saved["shards"][0]["run_ids"][0]
                 resumed = run_campaign("demo00000001", TASK_IDS, service=service, directory=campaign_dir)
                 self.assertEqual(resumed["status"], "completed")
-                self.assertEqual(resumed["summary"], {"total_tasks": 6, "completed_tasks": 6, "passed": 6, "completed_shards": 2, "total_shards": 2, "remote_requests_used": 0})
+                self.assertEqual(resumed["summary"], {"total_tasks": 6, "completed_tasks": 6, "passed": 6, "completed_shards": 2, "total_shards": 2, "remote_requests_used": 0, "remote_requests_uncertain": False})
                 self.assertEqual(resumed["shards"][0]["run_ids"], [first_run_id])
                 self.assertEqual(len(resumed["shards"][1]["run_ids"]), 2)
                 repeated = run_campaign("demo00000001", TASK_IDS, service=service, directory=campaign_dir)
@@ -96,6 +96,25 @@ class EvalCampaignTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "显式允许远程"):
                 run_campaign("live00000001", [TASK_IDS[0]], mode="live", request_limit=10, directory=Path(directory))
+
+    def test_legacy_interrupted_live_run_cannot_resume_with_unknown_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("app.evaluation.RUN_DIR", root / "runs"):
+                record = run_campaign("demo00000006", [TASK_IDS[0]], directory=root / "campaigns")
+                record["plan"]["mode"] = "live"
+                record["plan"]["request_limit"] = 20
+                record["status"] = "failed"
+                record["shards"][0]["status"] = "failed"
+                (root / "campaigns" / "demo00000006.json").write_text(json.dumps(record), encoding="utf-8")
+                run_path = evaluation.RUN_DIR / f"{record['shards'][0]['run_ids'][0]}.json"
+                run = json.loads(run_path.read_text(encoding="utf-8"))
+                run["status"] = "interrupted"
+                run["mode"] = "live"
+                run["request_budget"] = {"limit": 20, "used": 0, "exhausted": False}
+                run_path.write_text(json.dumps(run), encoding="utf-8")
+                from app.eval_campaign import _summary
+                self.assertTrue(_summary(record, evaluation.EvaluationService())["remote_requests_uncertain"])
 
     def test_cli_reads_versioned_task_file(self) -> None:
         task_file = Path(__file__).parents[1] / "evals" / "campaigns" / "ci_smoke.json"

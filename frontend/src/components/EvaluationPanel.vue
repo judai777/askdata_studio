@@ -550,9 +550,11 @@ function failureLabel(value: EvalFailureAttribution | null) {
       <p v-if="!campaigns.length">暂无作业记录</p>
       <details v-for="campaign in campaigns" :key="campaign.id" class="eval-campaign">
         <summary>{{ campaign.id }} · {{ campaign.mode === 'demo' ? '无模型演示' : '真实模型' }} · {{ campaign.status }} · {{ campaign.summary?.completed_tasks ?? 0 }}/{{ campaign.summary?.total_tasks ?? 0 }} 题</summary>
-        <p class="eval-meta">{{ campaign.created_at.slice(0, 19).replace('T', ' ') }} · {{ campaign.fixture_id }} · {{ campaign.trials }} 次试验 · 计划指纹 {{ campaign.plan_hash }}<span v-if="campaign.mode === 'live'"> · 已用远程请求 {{ campaign.summary?.remote_requests_used ?? 0 }}</span></p>
+        <p class="eval-meta">{{ campaign.created_at.slice(0, 19).replace('T', ' ') }} · {{ campaign.fixture_id }} · {{ campaign.trials }} 次试验 · 计划指纹 {{ campaign.plan_hash }}<span v-if="campaign.mode === 'live'"> · {{ campaign.summary?.remote_requests_uncertain ? '远程请求数未知' : `已用远程请求 ${campaign.summary?.remote_requests_used ?? 0}` }}</span></p>
+        <p v-if="campaign.evaluation_users" class="eval-meta">评测身份：{{ [...new Set(Object.values(campaign.evaluation_users))].join('、') }}</p>
+        <p v-if="campaign.summary?.remote_requests_uncertain" class="eval-error">历史运行的实际远程请求数无法确认；请创建新作业，不要续跑本作业。</p>
         <p v-if="campaign.mode === 'live' && campaign.summary?.schema_fields" class="eval-meta">字段级 Schema：有效试验 {{ campaign.summary.schema_fields.labeled_tasks }}，宏平均召回 {{ formatAgreement(campaign.summary.schema_fields.macro_recall) }}；SQL 结果正确 {{ campaign.summary.sql_outcome?.result_correct ?? 0 }}/{{ campaign.summary.sql_outcome?.attempts ?? 0 }} 次；模型调用 {{ campaign.summary.model_metrics?.model_calls ?? 0 }} 次</p>
-        <button v-if="['failed', 'interrupted'].includes(campaign.status)" class="eval-secondary" :disabled="campaignBusy" @click="startCampaign(campaign)">续跑未完成片</button>
+        <button v-if="['failed', 'interrupted'].includes(campaign.status) && !campaign.summary?.remote_requests_uncertain" class="eval-secondary" :disabled="campaignBusy" @click="startCampaign(campaign)">续跑未完成片</button>
         <div v-if="campaign.mode === 'live' && campaign.status === 'completed' && !campaignBaselines.some(item => item.campaign_id === campaign.id)">
           <label class="eval-review-note">基线审核意见<textarea v-model="campaignBaselineNote" rows="2" maxlength="1000" placeholder="先查看各片逐题轨迹，再写明接受该基线的理由"></textarea></label>
           <button class="eval-secondary" :disabled="campaignBusy" @click="approveCampaignBaseline(campaign)">人工批准为基线</button>

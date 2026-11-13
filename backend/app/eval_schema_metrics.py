@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 def _field_key(database: str, table: str, field: str) -> str:
+    if isinstance(database, str) and isinstance(table, str) and table.startswith(f"{database}."):
+        table = table[len(database) + 1:]
     parts = (database, table, field)
     if any(not isinstance(part, str) or not part or "." in part for part in parts):
         raise ValueError("字段必须有非空且不含点号的数据库、表和字段名")
