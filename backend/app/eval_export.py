@@ -75,6 +75,19 @@ def _safe_latency(source: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def _stage_usage(source: dict[str, Any] | None) -> dict[str, Any] | None:
+    if source is None:
+        return None
+    return {
+        **(_safe_numbers(source, ("calls", "usage_calls", "retry_requests", "unattributed_requests", "known_tokens", "total_tokens")) or {}),
+        "stages": [
+            {"stage": item["stage"],
+             **(_safe_numbers(item, ("calls", "failed_calls", "retry_requests", "usage_calls", "known_tokens", "token_share")) or {})}
+            for item in source.get("stages", []) if item.get("stage") in STAGE_NAMES | {"unknown"}
+        ],
+    }
+
+
 def _attribution(source: dict[str, Any] | None) -> dict[str, Any] | None:
     if source is None or source.get("kind") not in {"stage", "grader", "runner"}:
         return None
@@ -128,6 +141,7 @@ def export_report(record: dict[str, Any]) -> dict[str, Any]:
         "request_budget": _pick(record.get("request_budget"), ("limit", "used", "exhausted")),
         "summary": {**(_pick(summary, ("total", "passed", "completion", "safety", "process", "pass3")) or {}),
                     "metrics": _metrics(summary.get("metrics")),
+                    "stage_usage": _stage_usage(summary.get("stage_usage")),
                     "schema_fields": _safe_numbers(summary.get("schema_fields"), ("labeled_tasks", "unlabeled_tasks", "macro_recall", "macro_precision")),
                     "sql_outcome": _safe_numbers(summary.get("sql_outcome"), ("attempts", "executed", "result_correct")),
                     "sql_latency": _safe_latency(summary.get("sql_latency")),

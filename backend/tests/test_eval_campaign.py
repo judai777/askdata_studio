@@ -116,6 +116,21 @@ class EvalCampaignTests(unittest.TestCase):
                 from app.eval_campaign import _summary
                 self.assertTrue(_summary(record, evaluation.EvaluationService())["remote_requests_uncertain"])
 
+    def test_completed_legacy_live_campaign_backfills_stage_usage_without_rewriting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.RUN_DIR", Path(directory) / "runs"):
+            campaign_dir = evaluation.RUN_DIR / "_campaigns"
+            record = run_campaign("demo00000007", [TASK_IDS[0]], directory=campaign_dir)
+            campaign_path = campaign_dir / "demo00000007.json"
+            record["plan"]["mode"] = "live"
+            campaign_path.write_text(json.dumps(record), encoding="utf-8")
+            run_path = evaluation.RUN_DIR / f"{record['shards'][0]['run_ids'][0]}.json"
+            run = json.loads(run_path.read_text(encoding="utf-8"))
+            run["mode"] = "live"
+            run["cases"][0]["attempts"][0]["model_calls"] = [{"stage": "preprocess", "success": True, "usage": {"total_tokens": 12}}]
+            run_path.write_text(json.dumps(run), encoding="utf-8")
+            self.assertEqual(get_campaign("demo00000007", campaign_dir)["summary"]["stage_usage"]["total_tokens"], 12)
+            self.assertNotIn("stage_usage", json.loads(campaign_path.read_text(encoding="utf-8"))["summary"])
+
     def test_cli_reads_versioned_task_file(self) -> None:
         task_file = Path(__file__).parents[1] / "evals" / "campaigns" / "ci_smoke.json"
         with tempfile.TemporaryDirectory() as directory, patch("app.evaluation.RUN_DIR", Path(directory) / "runs"):

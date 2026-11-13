@@ -159,3 +159,5 @@ P2 失败归因已完成：失败试验给出主要排查位置，区分工作�
 首次三题真实评测及修复记录见[第四十二阶段验收](docs/evaluation-v42-validation.md)：当前可审核作业 `stable000001` 在 `edge_v3` 上通过 1/3，SQL 执行 3/3，字段级 Schema 宏平均召回 100%；这只覆盖一轮三题样本。旧运行若没有逐请求预算记录，不能安全续跑；真实 MCP 工具轨迹的安全判分已按实际结构修复。
 
 Prompt 受控对比与逐题人工审核材料见[第四十三阶段验收](docs/evaluation-v43-validation.md)：管理员可从已批准作业创建固定条件的 Prompt 候选；新 Prompt 尚未进行付费真实评测。
+
+真实运行的阶段 Token 用量和 Schema 噪声分析见[第四十四阶段诊断](docs/evaluation-v44-validation.md)；管理员报告可查看各阶段已知用量及缺失覆盖。

@@ -16,6 +16,7 @@ from typing import Any
 
 from . import evaluation
 from .eval_grader_version import grader_hash
+from .eval_efficiency import stage_usage
 from .eval_models import resolve_model
 from .eval_provenance import provenance_snapshot
 from .eval_schema_metrics import aggregate_schema_fields, load_field_targets
@@ -34,6 +35,7 @@ def _save(path: Path, record: dict[str, Any]) -> None:
 
 def _summary(record: dict[str, Any], service: evaluation.EvaluationService) -> dict[str, Any]:
     completed = []
+    cost_attempts = []
     used = 0
     uncertain = False
     for shard in record["shards"]:
@@ -47,6 +49,7 @@ def _summary(record: dict[str, Any], service: evaluation.EvaluationService) -> d
             used += budget.get("used", 0)
             if record["plan"]["mode"] == "live" and run.get("status") != "completed" and not budget.get("tracked"):
                 uncertain = True
+            cost_attempts.extend(attempt for case in run.get("cases", []) for attempt in case.get("attempts", []))
             latest = run
         if latest and latest.get("status") == "completed":
             completed.append(latest)
@@ -64,7 +67,8 @@ def _summary(record: dict[str, Any], service: evaluation.EvaluationService) -> d
         attempts = [attempt for run in completed for case in run.get("cases", []) for attempt in case.get("attempts", [])]
         result["schema_fields"] = aggregate_schema_fields([attempt.get("schema_fields") for attempt in attempts])
         result["sql_outcome"] = aggregate_sql_attempts([attempt.get("sql_outcome") for attempt in attempts])
-        result["model_metrics"] = evaluation.aggregate_metrics(attempts)
+        result["model_metrics"] = evaluation.aggregate_metrics(cost_attempts)
+        result["stage_usage"] = stage_usage(cost_attempts, used if not uncertain else None)
     record["summary"] = result
     return result
 
@@ -252,7 +256,8 @@ def get_campaign(campaign_id: str, directory: Path | None = None) -> dict[str, A
     root = directory or evaluation.RUN_DIR / "_campaigns"
     path = root / f"{campaign_id}.json"
     record = json.loads(path.read_text(encoding="utf-8"))
-    if record["plan"]["mode"] == "live" and record["status"] in {"failed", "interrupted", "budget_uncertain"}:
+    if record["plan"]["mode"] == "live" and (record["status"] in {"failed", "interrupted", "budget_uncertain"}
+                                              or "stage_usage" not in (record.get("summary") or {})):
         _summary(record, evaluation.EvaluationService())
     status = record["status"]
     if status in {"queued", "running"} and campaign_manager._active_id != campaign_id:

@@ -26,6 +26,7 @@ from .eval_models import resolve_model
 from . import eval_labels
 from .eval_grader_version import grader_hash
 from .eval_schema_metrics import aggregate_schema_fields, load_field_targets, score_attempt_fields
+from .eval_efficiency import stage_usage
 from .eval_sql_metrics import aggregate_sql_attempts, score_sql_attempt
 from .eval_latency_metrics import aggregate_sql_latencies
 from .eval_provenance import compare_provenance, provenance_snapshot
@@ -822,6 +823,10 @@ class EvaluationService:
         complete_cases = [case for case in cases if not case.get("incomplete")]
         record["summary"] = {"total": record.get("task_count", len(cases)), "passed": sum(all(a["grade"]["passed"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "completion": sum(all(a["grade"]["dimensions"]["completion"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "safety": sum(all(a["grade"]["dimensions"]["safety"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "process": sum(all(a["grade"]["dimensions"]["process"] for a in c.get("attempts", [{"grade": c["grade"]}])) for c in complete_cases), "pass3": sum(c.get("pass3", False) for c in complete_cases) if record.get("trials") == 3 else None}
         record["summary"]["metrics"] = aggregate_metrics([attempt for case in cases for attempt in case.get("attempts", [])])
+        record["summary"]["stage_usage"] = stage_usage(
+            [attempt for case in cases for attempt in case.get("attempts", [])],
+            (record.get("request_budget") or {}).get("used") if (record.get("request_budget") or {}).get("tracked") else None,
+        ) if record.get("mode") == "live" else None
         record["summary"]["schema_fields"] = aggregate_schema_fields([attempt.get("schema_fields") for case in cases for attempt in case.get("attempts", [])]) if record.get("mode") == "live" else None
         record["summary"]["sql_outcome"] = aggregate_sql_attempts([attempt.get("sql_outcome") for case in cases for attempt in case.get("attempts", [])]) if record.get("mode") == "live" else None
         record["summary"]["sql_latency"] = aggregate_sql_latencies(cases, record.get("mode", "demo"))
@@ -844,6 +849,11 @@ class EvaluationService:
         if not run_id.isalnum() or len(run_id) != 12:
             raise FileNotFoundError(run_id)
         record = json.loads((RUN_DIR / f"{run_id}.json").read_text(encoding="utf-8"))
+        if record.get("mode") == "live" and "stage_usage" not in (record.get("summary") or {}):
+            record.setdefault("summary", {})["stage_usage"] = stage_usage(
+                [attempt for case in record.get("cases", []) for attempt in case.get("attempts", [])],
+                (record.get("request_budget") or {}).get("used") if (record.get("request_budget") or {}).get("tracked") else None,
+            )
         if record.get("status") in {"queued", "running", "cancel_requested"} and self._active_run_id != run_id and not _campaign_run_active(run_id):
             record["status"] = "interrupted"
             record["error"] = "服务重启或后台进程中断"
