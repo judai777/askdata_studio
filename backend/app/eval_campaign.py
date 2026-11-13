@@ -116,8 +116,12 @@ def _build_plan(campaign_id: str, task_ids: list[str], mode: str, trials: int, f
     return plan, chunks, tasks
 
 
+def plan_fingerprint(plan: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+
+
 def _load_or_create(campaign_id: str, plan: dict[str, Any], chunks: list[list[str]], directory: Path) -> tuple[dict[str, Any], Path]:
-    plan_hash = hashlib.sha256(json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    plan_hash = plan_fingerprint(plan)
     path = directory / f"{campaign_id}.json"
     if path.exists():
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -235,7 +239,9 @@ def _public_campaign(record: dict[str, Any], *, status: str | None = None) -> di
     plan = record["plan"]
     return {
         "id": record["id"], "created_at": record["created_at"],
+        "regraded_from": record.get("regraded_from"),
         "status": status or record["status"], "plan_hash": record["plan_hash"],
+        "grader_hash": plan["grader_hash"],
         "mode": plan["mode"], "trials": plan["trials"],
         "prompt_variant": plan.get("prompt_variant", "default"),
         "task_ids": plan["task_ids"], "request_limit": plan["request_limit"],

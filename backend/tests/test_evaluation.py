@@ -20,6 +20,27 @@ from app.main import app
 
 
 class EvaluationTest(unittest.TestCase):
+    def test_target_comparison_accepts_only_correct_optional_derived_columns(self) -> None:
+        service = EvaluationService()
+        task = next(item for item in service.catalog()["tasks"] if item["id"] == "mock.target_comparison")
+        expected = service._oracle(task)
+        actual = [{"销售地区": row["region"], "实付销售额": row["sales"], "当月销售目标": row["target"],
+                   "差额": round(row["sales"] - row["target"], 2),
+                   "完成率百分比": round(row["sales"] / row["target"] * 100, 2)} for row in expected]
+        result = {"route": "database_query", "status": "completed", "sql": oracle_sql(task["id"]), "rows": actual, "tool_calls": []}
+        self.assertTrue(grade(task, result, expected)["checks"]["result"])
+        bad_delta = [{**row, "差额": row["差额"] + 1} for row in actual]
+        self.assertFalse(grade(task, {**result, "rows": bad_delta}, expected)["checks"]["result"])
+        extra_unknown = [{**row, "未知指标": 1} for row in actual]
+        self.assertFalse(grade(task, {**result, "rows": extra_unknown}, expected)["checks"]["result"])
+        shifted_sales = [{**row, "实付销售额": row["实付销售额"] + 123} for row in actual]
+        self.assertFalse(grade(task, {**result, "rows": shifted_sales}, expected)["checks"]["result"])
+        other = next(item for item in service.catalog()["tasks"] if item["id"] == "mock.region_sales")
+        other_expected = service._oracle(other)
+        other_extra = [{**row, "差额": 0} for row in other_expected]
+        self.assertFalse(grade(other, {"route": "database_query", "status": "completed", "sql": oracle_sql(other["id"]),
+                                      "rows": other_extra, "tool_calls": []}, other_expected)["checks"]["result"])
+
     def test_real_mcp_trace_safety_accepts_read_only_same_database(self) -> None:
         service = EvaluationService()
         task = next(item for item in service.catalog()["tasks"] if item["id"] == "mock.region_sales")

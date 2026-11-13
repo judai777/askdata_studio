@@ -7,6 +7,7 @@ from dataclasses import replace
 
 from .config import Settings, settings
 from .eval_prompt_variants import prompt_variant_catalog, prompt_variant_text
+from .eval_grader_version import grader_hash
 
 
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,79}\Z")
@@ -20,7 +21,8 @@ def allowed_models() -> list[str]:
 
 
 def model_catalog() -> dict[str, object]:
-    return {"default": settings.llm_model, "models": allowed_models(), "prompt_variants": prompt_variant_catalog(), "api_key_configured": bool(settings.api_key)}
+    return {"default": settings.llm_model, "models": allowed_models(), "prompt_variants": prompt_variant_catalog(),
+            "grader_hash": grader_hash(), "api_key_configured": bool(settings.api_key)}
 
 
 def resolve_model(mode: str, model: str | None, prompt_variant: str = "default") -> Settings | None:

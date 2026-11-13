@@ -6,6 +6,7 @@ from pydantic import BaseModel, StrictBool, StrictInt
 from ..errors import PipelineStageError
 from ..eval_campaign import campaign_manager, get_campaign, list_campaigns
 from ..eval_campaign_gate import approve_baseline, compare_to_baseline, list_baselines
+from ..eval_campaign_regrade import regrade_campaign
 from ..eval_models import model_catalog
 from ..evaluation import EvaluationService
 from ..models import (
@@ -47,6 +48,10 @@ class EvalCampaignBaselineRequest(BaseModel):
     campaign_id: str
     fingerprint: str
     note: str
+
+
+class EvalCampaignRegradeRequest(BaseModel):
+    campaign_id: str
 
 
 class EvalReviewRequest(BaseModel):
@@ -124,6 +129,16 @@ def eval_start_campaign(payload: EvalCampaignRequest, _: AuthUser = Depends(requ
 @router.get("/eval/campaign-baselines")
 def eval_campaign_baselines(_: AuthUser = Depends(require_admin)) -> list[dict]:
     return list_baselines()
+
+
+@router.post("/eval/campaigns/{source_id}/regrade")
+def eval_regrade_campaign(source_id: str, payload: EvalCampaignRegradeRequest, _: AuthUser = Depends(require_admin)) -> dict:
+    try:
+        return regrade_campaign(source_id, payload.campaign_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="源评测作业不存在") from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.post("/eval/campaign-baselines")

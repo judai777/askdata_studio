@@ -9,7 +9,7 @@ import sqlglot
 from .config import BASE_DIR
 
 
-GRADE_FUNCTIONS = ("_normalize", "_rows_equal", "grade", "combine_attempts")
+GRADE_FUNCTIONS = ("_normalize", "_rows_equal", "_target_comparison_rows_equal", "grade", "combine_attempts")
 
 
 def grader_hash() -> str:

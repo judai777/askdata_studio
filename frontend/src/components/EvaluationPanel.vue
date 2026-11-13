@@ -123,6 +123,17 @@ async function refreshCampaigns() {
   catch (caught) { campaignError.value = String(caught) }
 }
 
+async function regradeCampaign(campaign: EvalCampaign) {
+  campaignError.value = ""
+  campaignBusy.value = true
+  try {
+    const derived = await api.evalRegradeCampaign(campaign.id, crypto.randomUUID().replaceAll('-', '').slice(0, 12))
+    campaigns.value = [derived, ...campaigns.value]
+    await refreshCampaigns()
+  } catch (caught) { campaignError.value = String(caught) }
+  finally { campaignBusy.value = false }
+}
+
 async function startCampaign(existing?: EvalCampaign) {
   campaignError.value = ""
   const taskIds = existing?.task_ids || selected.value
@@ -512,6 +523,7 @@ function failureLabel(value: EvalFailureAttribution | null) {
           <p v-if="current.baseline_run_id" class="eval-meta">候选运行 · 基线 {{ current.baseline_run_id }} · 固定题目、数据、试验次数和请求上限</p>
           <p v-if="current.task_ids?.length" class="eval-meta">本次选题：{{ current.task_ids.join('、') }}</p>
           <p class="eval-meta">原始判分器 {{ current.grader_hash || '未知（旧运行）' }}<span v-if="current.replay_grader_hash"> · 本次重放判分器 {{ current.replay_grader_hash }}</span></p>
+          <p v-if="current.regraded_from" class="eval-meta">本地重判自运行 {{ current.regraded_from }} · 原始判分器 {{ current.original_grader_hash }}；未新增模型请求</p>
           <p v-if="current.replay_grader_hash && current.grader_hash && current.replay_grader_hash !== current.grader_hash" class="eval-notice">本次重放使用了不同的判分器，重判结果可能与原始报告不同；原始记录未被覆盖。</p>
           <p v-if="current.review" class="eval-meta">运行时人工审核：{{ current.review.approved }}/{{ current.review.total }} 题已通过 <span v-if="current.review.pending || current.review.stale || current.review.rejected">· 其余题分数仅供开发验证</span></p>
           <p v-if="current.mode === 'live' && current.provenance" class="eval-meta">提示词相关源码 {{ current.provenance.prompt_hash }} · 工作流源码 {{ current.provenance.workflow_hash }}</p>
@@ -574,11 +586,13 @@ function failureLabel(value: EvalFailureAttribution | null) {
       <details v-for="campaign in campaigns" :key="campaign.id" class="eval-campaign">
         <summary>{{ campaign.id }} · {{ campaign.mode === 'demo' ? '无模型演示' : '真实模型' }} · {{ campaign.status }} · {{ campaign.summary?.completed_tasks ?? 0 }}/{{ campaign.summary?.total_tasks ?? 0 }} 题</summary>
         <p class="eval-meta">{{ campaign.created_at.slice(0, 19).replace('T', ' ') }} · {{ campaign.fixture_id }} · {{ campaign.trials }} 次试验 · Prompt {{ campaign.prompt_variant || 'default' }} · 计划指纹 {{ campaign.plan_hash }}<span v-if="campaign.mode === 'live'"> · {{ campaign.summary?.remote_requests_uncertain ? '远程请求数未知' : `已用远程请求 ${campaign.summary?.remote_requests_used ?? 0}` }}</span></p>
+        <p class="eval-meta">判分器 {{ campaign.grader_hash }}<span v-if="campaign.regraded_from"> · 本地重判自 {{ campaign.regraded_from }}；未新增模型请求，原始调用用量沿用</span></p>
         <p v-if="campaign.evaluation_users" class="eval-meta">评测身份：{{ [...new Set(Object.values(campaign.evaluation_users))].join('、') }}</p>
         <p v-if="campaign.summary?.remote_requests_uncertain" class="eval-error">历史运行的实际远程请求数无法确认；请创建新作业，不要续跑本作业。</p>
         <p v-if="campaign.mode === 'live' && campaign.summary?.schema_fields" class="eval-meta">字段级 Schema：有效试验 {{ campaign.summary.schema_fields.labeled_tasks }}，宏平均召回 {{ formatAgreement(campaign.summary.schema_fields.macro_recall) }}、准确 {{ formatAgreement(campaign.summary.schema_fields.macro_precision) }}；SQL 结果正确 {{ campaign.summary.sql_outcome?.result_correct ?? 0 }}/{{ campaign.summary.sql_outcome?.attempts ?? 0 }} 次；模型调用 {{ campaign.summary.model_metrics?.model_calls ?? 0 }} 次</p>
         <details v-if="campaign.summary?.stage_usage" class="eval-provenance"><summary>按阶段查看 Token 用量 · {{ campaign.summary.stage_usage.total_tokens ?? `已知 ${campaign.summary.stage_usage.known_tokens}，部分未知` }}</summary><p v-if="campaign.summary.stage_usage.unattributed_requests" class="eval-notice">{{ campaign.summary.stage_usage.unattributed_requests }} 次请求未形成完整轨迹，用量未知。</p><p v-for="stage in campaign.summary.stage_usage.stages" :key="stage.stage" class="eval-meta">{{ stageLabel(stage.stage) }}：{{ stage.known_tokens }} Token · {{ stage.usage_calls }}/{{ stage.calls }} 次有用量<span v-if="stage.retry_requests"> · 重试 {{ stage.retry_requests }} 次用量未知</span><span v-if="stage.token_share !== null"> · 占 {{ formatAgreement(stage.token_share) }}</span></p></details>
         <button v-if="['failed', 'interrupted'].includes(campaign.status) && !campaign.summary?.remote_requests_uncertain" class="eval-secondary" :disabled="campaignBusy" @click="startCampaign(campaign)">续跑未完成片</button>
+        <button v-if="campaign.mode === 'live' && campaign.status === 'completed' && modelCatalog && campaign.grader_hash !== modelCatalog.grader_hash" class="eval-secondary" :disabled="campaignBusy" @click="regradeCampaign(campaign)">按当前判分器本地重判（不调用模型）</button>
         <div v-if="campaign.mode === 'live' && campaign.status === 'completed' && !campaignBaselines.some(item => item.campaign_id === campaign.id)">
           <label class="eval-review-note">基线审核意见<textarea v-model="campaignBaselineNote" rows="2" maxlength="1000" placeholder="先查看各片逐题轨迹，再写明接受该基线的理由"></textarea></label>
           <button class="eval-secondary" :disabled="campaignBusy" @click="approveCampaignBaseline(campaign)">人工批准为基线</button>
