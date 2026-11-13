@@ -56,3 +56,26 @@ def stage_usage(attempts: list[dict[str, Any]], request_count: int | None = None
             "unattributed_requests": unattributed_requests,
             "known_tokens": known_tokens, "total_tokens": known_tokens if complete else None,
             "stages": stages}
+
+
+def compare_stage_usage(baseline: dict[str, Any] | None, candidate: dict[str, Any] | None,
+                        *, allow_delta: bool = True) -> dict[str, Any]:
+    before = baseline or None
+    after = candidate or None
+    complete = (allow_delta and before is not None and after is not None
+                and type(before.get("total_tokens")) is int and type(after.get("total_tokens")) is int)
+    stage_deltas = []
+    if complete:
+        before_stages = {item["stage"]: item["known_tokens"] for item in before.get("stages", [])}
+        after_stages = {item["stage"]: item["known_tokens"] for item in after.get("stages", [])}
+        stage_deltas = [{"stage": stage, "baseline_tokens": before_stages.get(stage, 0),
+                         "candidate_tokens": after_stages.get(stage, 0),
+                         "delta_tokens": after_stages.get(stage, 0) - before_stages.get(stage, 0)}
+                        for stage in sorted(before_stages.keys() | after_stages.keys())]
+    delta = after["total_tokens"] - before["total_tokens"] if complete else None
+    return {
+        "baseline": before, "candidate": after,
+        "delta_tokens": delta,
+        "delta_percent": delta / before["total_tokens"] if complete and before["total_tokens"] else None,
+        "stage_deltas": stage_deltas,
+    }

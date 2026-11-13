@@ -596,6 +596,14 @@ function failureLabel(value: EvalFailureAttribution | null) {
         <button class="eval-secondary" @click="compareCampaigns">检查逐题回归门槛</button>
       </div>
       <p v-if="campaignGate" :class="campaignGate.passed ? 'pass' : 'fail'">{{ campaignGate.passed ? '门槛通过' : '门槛未通过' }} · 变量 {{ campaignGate.variable === 'prompt' ? 'Prompt' : campaignGate.variable === 'chat_model' ? 'Chat 模型' : '重复运行' }} · 基线 {{ campaignGate.baseline_passed }}/{{ campaignGate.task_count }} · 候选 {{ campaignGate.candidate_passed }}/{{ campaignGate.task_count }} · 退化 {{ campaignGate.regressed.join('、') || '无' }} · 改善 {{ campaignGate.improved.join('、') || '无' }}</p>
+      <div v-if="campaignGate" class="eval-provenance">
+        <p v-if="campaignGate.quality.sql.attempts" class="eval-meta">SQL 结果正确：基线 {{ campaignGate.quality.sql.baseline_correct }}/{{ campaignGate.quality.sql.attempts }} → 候选 {{ campaignGate.quality.sql.candidate_correct }}/{{ campaignGate.quality.sql.attempts }}（变化 {{ campaignGate.quality.sql.delta_correct }}）</p>
+        <p v-if="campaignGate.quality.schema.labeled_tasks" class="eval-meta">字段级 Schema（{{ campaignGate.quality.schema.labeled_tasks }} 次有效试验）：宏召回 {{ formatAgreement(campaignGate.quality.schema.baseline_recall) }} → {{ formatAgreement(campaignGate.quality.schema.candidate_recall) }}；宏准确 {{ formatAgreement(campaignGate.quality.schema.baseline_precision) }} → {{ formatAgreement(campaignGate.quality.schema.candidate_precision) }}</p>
+        <p class="eval-meta">远程请求：{{ campaignGate.cost.baseline_requests ?? '未知' }} → {{ campaignGate.cost.candidate_requests ?? '未知' }}；分片重试：{{ campaignGate.cost.baseline_shard_retries }} → {{ campaignGate.cost.candidate_shard_retries }}</p>
+        <p v-if="campaignGate.cost.delta_tokens !== null" class="eval-meta">完整 Token：{{ campaignGate.cost.baseline?.total_tokens }} → {{ campaignGate.cost.candidate?.total_tokens }}；变化 {{ campaignGate.cost.delta_tokens }}（{{ formatAgreement(campaignGate.cost.delta_percent) }}）</p>
+        <p v-else class="eval-notice">完整 Token 差值未知；已知用量：基线 {{ campaignGate.cost.baseline?.known_tokens ?? '未知' }}，候选 {{ campaignGate.cost.candidate?.known_tokens ?? '未知' }}。请核对用量覆盖、重试和中断请求。</p>
+        <details v-if="campaignGate.cost.stage_deltas.length"><summary>各阶段 Token 差值（候选减基线）</summary><p v-for="stage in campaignGate.cost.stage_deltas" :key="stage.stage" class="eval-meta">{{ stageLabel(stage.stage) }}：{{ stage.baseline_tokens }} → {{ stage.candidate_tokens }}（{{ stage.delta_tokens }}）</p></details>
+      </div>
     </section>
     <section class="eval-card eval-history">
       <h2>4 · 回归对比</h2>

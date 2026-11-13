@@ -163,3 +163,5 @@ Prompt 受控对比与逐题人工审核材料见[第四十三阶段验收](docs
 真实运行的阶段 Token 用量和 Schema 噪声分析见[第四十四阶段诊断](docs/evaluation-v44-validation.md)；管理员报告可查看各阶段已知用量及缺失覆盖。
 
 紧凑 Schema 输入的可选评测版本及离线输入大小核对见[第四十五阶段验收](docs/evaluation-v45-validation.md)；真实模型效果仍待基线批准后验证。
+
+受控作业的质量与阶段用量并排报告见[第四十六阶段验收](docs/evaluation-v46-validation.md)；无完整供应商用量时不输出 Token 节省比例。

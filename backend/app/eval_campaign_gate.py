@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from . import evaluation
-from .eval_campaign import _save
+from .eval_campaign import _save, _summary
+from .eval_efficiency import compare_stage_usage
 
 
 def _campaign(campaign_id: str, directory: Path) -> dict[str, Any]:
@@ -42,8 +43,8 @@ def _cases(campaign: dict[str, Any], service: evaluation.EvaluationService) -> d
             raise ValueError("作业关联运行的实现来源不一致")
         if run_source.get("prompt_variant", "default") != plan.get("prompt_variant", "default"):
             raise ValueError("作业关联运行的 Prompt 版本不一致")
-        if (run_source.get("config") or {}).get("llm_model") != (plan["provenance"].get("config") or {}).get("llm_model"):
-            raise ValueError("作业关联运行的模型不一致")
+        if run_source.get("config") != plan["provenance"].get("config"):
+            raise ValueError("作业关联运行的模型或参数不一致")
         if set(run.get("task_ids", [])) != set(shard["task_ids"]) or len(run.get("cases", [])) != len(shard["task_ids"]):
             raise ValueError("作业关联运行缺少题目")
         for case in run["cases"]:
@@ -127,10 +128,36 @@ def compare_to_baseline(baseline_id: str, candidate_id: str, *, directory: Path 
     candidate_cases = _cases(candidate, service)
     regressed = sorted(task_id for task_id, passed in baseline_cases.items() if passed and not candidate_cases[task_id])
     improved = sorted(task_id for task_id, passed in baseline_cases.items() if not passed and candidate_cases[task_id])
+    baseline_summary = _summary(baseline, service)
+    candidate_summary = _summary(candidate, service)
+    baseline_retries = sum(max(len(shard["run_ids"]) - 1, 0) for shard in baseline["shards"])
+    candidate_retries = sum(max(len(shard["run_ids"]) - 1, 0) for shard in candidate["shards"])
+    request_known = not baseline_summary["remote_requests_uncertain"] and not candidate_summary["remote_requests_uncertain"]
+    usage = compare_stage_usage(baseline_summary.get("stage_usage"), candidate_summary.get("stage_usage"),
+                                allow_delta=baseline_retries == 0 and candidate_retries == 0 and request_known)
+    base_schema, candidate_schema = baseline_summary.get("schema_fields") or {}, candidate_summary.get("schema_fields") or {}
+    schema_comparable = (base_schema.get("labeled_tasks", 0) > 0
+                         and base_schema.get("labeled_tasks") == candidate_schema.get("labeled_tasks"))
+    base_sql, candidate_sql = baseline_summary.get("sql_outcome") or {}, candidate_summary.get("sql_outcome") or {}
     return {
         "baseline_id": baseline_id, "candidate_id": candidate_id,
         "passed": not regressed, "task_count": len(baseline_cases),
         "baseline_passed": sum(baseline_cases.values()), "candidate_passed": sum(candidate_cases.values()),
         "regressed": regressed, "improved": improved,
         "variable": "prompt" if prompt_changed else "chat_model" if model_changed else "repeat",
+        "quality": {
+            "schema": {"labeled_tasks": base_schema.get("labeled_tasks") if schema_comparable else None,
+                       "baseline_recall": base_schema.get("macro_recall"), "candidate_recall": candidate_schema.get("macro_recall"),
+                       "baseline_precision": base_schema.get("macro_precision"), "candidate_precision": candidate_schema.get("macro_precision"),
+                       "delta_recall": candidate_schema["macro_recall"] - base_schema["macro_recall"] if schema_comparable and base_schema.get("macro_recall") is not None and candidate_schema.get("macro_recall") is not None else None,
+                       "delta_precision": candidate_schema["macro_precision"] - base_schema["macro_precision"] if schema_comparable and base_schema.get("macro_precision") is not None and candidate_schema.get("macro_precision") is not None else None},
+            "sql": {"attempts": base_sql.get("attempts") if base_sql.get("attempts") == candidate_sql.get("attempts") else None,
+                    "baseline_correct": base_sql.get("result_correct"), "candidate_correct": candidate_sql.get("result_correct"),
+                    "delta_correct": candidate_sql["result_correct"] - base_sql["result_correct"] if base_sql.get("attempts", 0) > 0 and base_sql.get("attempts") == candidate_sql.get("attempts") else None},
+        },
+        "cost": {**usage,
+                 "baseline_requests": baseline_summary["remote_requests_used"] if request_known else None,
+                 "candidate_requests": candidate_summary["remote_requests_used"] if request_known else None,
+                 "delta_requests": candidate_summary["remote_requests_used"] - baseline_summary["remote_requests_used"] if request_known else None,
+                 "baseline_shard_retries": baseline_retries, "candidate_shard_retries": candidate_retries},
     }

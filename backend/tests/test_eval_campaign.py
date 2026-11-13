@@ -203,6 +203,8 @@ class EvalCampaignTests(unittest.TestCase):
                     run = json.loads(run_path.read_text(encoding="utf-8"))
                     run["mode"] = "live"
                     run["provenance"] = {"kind": "live", "prompt_hash": "prompt", "workflow_hash": "flow", "config": {"llm_model": model, "embedding_model": "same"}}
+                    run["cases"][0]["attempts"][0]["model_calls"] = [{"stage": "prepare_single_database", "success": True,
+                                                                           "usage": {"total_tokens": 100 if model == "model-a" else 70}}]
                     if model == "model-b":
                         run["cases"][0]["grade"]["passed"] = False
                     run_path.write_text(json.dumps(run), encoding="utf-8")
@@ -221,6 +223,8 @@ class EvalCampaignTests(unittest.TestCase):
                 self.assertFalse(result["passed"])
                 self.assertEqual(result["regressed"], [TASK_IDS[0]])
                 self.assertEqual(result["variable"], "chat_model")
+                self.assertEqual(result["cost"]["delta_tokens"], -30)
+                self.assertFalse(result["passed"])
                 candidate_path = campaign_dir / "cand00000001.json"
                 candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
                 candidate_run_path = evaluation.RUN_DIR / f"{candidate['shards'][0]['run_ids'][0]}.json"
@@ -250,6 +254,12 @@ class EvalCampaignTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "工作流版本"):
                     compare_to_baseline("base00000001", "cand00000001", directory=campaign_dir, service=service)
                 candidate["plan"]["provenance"]["workflow_hash"] = "flow"
+                candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+                candidate_run["provenance"] = json.loads(json.dumps(candidate["plan"]["provenance"]))
+                candidate_run["provenance"]["config"]["embedding_model"] = "changed-embedding"
+                candidate_run_path.write_text(json.dumps(candidate_run), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "模型或参数"):
+                    compare_to_baseline("base00000001", "cand00000001", directory=campaign_dir, service=service)
                 candidate_path.write_text(original_candidate, encoding="utf-8")
                 candidate_run_path.write_text(original_candidate_run, encoding="utf-8")
                 candidate = json.loads(original_candidate)

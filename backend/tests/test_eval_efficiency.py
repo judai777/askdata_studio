@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.eval_efficiency import stage_usage
+from app.eval_efficiency import compare_stage_usage, stage_usage
 from app.evaluation import EvaluationService
 
 
@@ -44,6 +44,19 @@ class EfficiencyTests(unittest.TestCase):
                                         "summary": {}, "cases": [{"attempts": attempts}]}), encoding="utf-8")
             self.assertEqual(EvaluationService().get_run("oldrun000001")["summary"]["stage_usage"], result)
             self.assertNotIn("stage_usage", json.loads(path.read_text(encoding="utf-8"))["summary"])
+
+    def test_comparison_needs_complete_usage_and_no_shard_retry(self) -> None:
+        before = stage_usage([{"model_calls": [{"stage": "prepare_single_database", "success": True,
+                                                 "usage": {"total_tokens": 100}}]}])
+        after = stage_usage([{"model_calls": [{"stage": "prepare_single_database", "success": True,
+                                                "usage": {"total_tokens": 70}}]}])
+        compared = compare_stage_usage(before, after)
+        self.assertEqual(compared["delta_tokens"], -30)
+        self.assertEqual(compared["delta_percent"], -0.3)
+        self.assertEqual(compared["stage_deltas"][0]["delta_tokens"], -30)
+        self.assertIsNone(compare_stage_usage(before, after, allow_delta=False)["delta_tokens"])
+        incomplete = stage_usage([{"model_calls": [{"stage": "prepare_single_database", "success": False}]}])
+        self.assertIsNone(compare_stage_usage(before, incomplete)["delta_tokens"])
 
 
 if __name__ == "__main__":
