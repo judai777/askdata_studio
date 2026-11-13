@@ -161,3 +161,5 @@ P2 失败归因已完成：失败试验给出主要排查位置，区分工作�
 Prompt 受控对比与逐题人工审核材料见[第四十三阶段验收](docs/evaluation-v43-validation.md)：管理员可从已批准作业创建固定条件的 Prompt 候选；新 Prompt 尚未进行付费真实评测。
 
 真实运行的阶段 Token 用量和 Schema 噪声分析见[第四十四阶段诊断](docs/evaluation-v44-validation.md)；管理员报告可查看各阶段已知用量及缺失覆盖。
+
+紧凑 Schema 输入的可选评测版本及离线输入大小核对见[第四十五阶段验收](docs/evaluation-v45-validation.md)；真实模型效果仍待基线批准后验证。

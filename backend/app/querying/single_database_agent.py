@@ -78,6 +78,12 @@ class SingleDatabaseAgent:
             "schema_text": schema_context,
             "mcp_tools": tools,
         }
+        if self.prompt_variant == "compact_context_v1":
+            base_payload["retrieval"] = {
+                "threshold": retrieval.get("threshold"),
+                "selected_field_ids": [hit["doc_id"] for hit in retrieval.get("hits", [])],
+                "low_confidence_candidates": retrieval.get("low_confidence_candidates", []),
+            }
 
         try:
             for call_index in range(1, self.max_tool_calls + 1):

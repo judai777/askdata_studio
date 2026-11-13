@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -20,14 +21,31 @@ from app.querying.single_database_agent import SingleDatabaseAgent
 class EvalModelTest(unittest.TestCase):
     def test_prompt_variant_only_changes_single_database_agent_system_message(self) -> None:
         systems: list[str] = []
-        model = SimpleNamespace(chat_json=lambda system, _payload: (systems.append(system), {"action": "call_tool", "tool_name": "query_askdata_mock", "arguments": {}})[1])
+        payloads: list[dict] = []
+        def decide(system: str, payload: str) -> dict:
+            systems.append(system)
+            payloads.append(json.loads(payload))
+            return {"action": "call_tool", "tool_name": "query_askdata_mock", "arguments": {}}
+        model = SimpleNamespace(chat_json=decide)
         mcp = SimpleNamespace(list_tools=lambda: [{"name": "query_askdata_mock"}], call_tool=lambda *_args: {"success": True})
         skill = SimpleNamespace(instructions="基础规则", allowed_tools=["query_*"], max_tool_calls=3, output_actions=["call_tool"])
-        for variant in ("default", "time_filter_v1"):
+        retrieval = {"threshold": 0.5, "hits": [{"doc_id": "orders.order_date", "vector_text": "large duplicate"},
+                                                 {"doc_id": "orders.status", "vector_text": "other duplicate"}],
+                     "low_confidence_candidates": [{"doc_id": "orders.amount"}]}
+        graph = {"fields": [{"id": "orders.order_date", "name": "order_date"}], "joins": []}
+        for variant in ("default", "time_filter_v1", "compact_context_v1"):
             agent = SingleDatabaseAgent(model, lambda _scope: mcp, skill, prompt_variant=variant)
-            self.assertEqual(agent.prepare("统计销售额", "askdata_mock", {}, "", {}, {}, {})["action"], "executed")
+            self.assertEqual(agent.prepare("统计销售额", "askdata_mock", graph, "字段说明", retrieval, {}, {})["action"], "executed")
         self.assertNotIn("逐项核对", systems[0])
         self.assertIn("逐项核对", systems[1])
+        self.assertIn("selected_field_ids", systems[2])
+        self.assertEqual(payloads[0]["retrieval"]["selected_fields"], retrieval["hits"])
+        self.assertEqual(payloads[1]["retrieval"]["selected_fields"], retrieval["hits"])
+        self.assertEqual(payloads[2]["retrieval"]["selected_field_ids"], [hit["doc_id"] for hit in retrieval["hits"]])
+        self.assertEqual(payloads[2]["retrieval"]["low_confidence_candidates"], retrieval["low_confidence_candidates"])
+        self.assertEqual(payloads[2]["schema_graph"], graph)
+        self.assertEqual(payloads[2]["schema_text"], "字段说明")
+        self.assertEqual(payloads[2]["mcp_tools"], payloads[0]["mcp_tools"])
 
     def test_allowlist_and_mode_validation(self) -> None:
         with patch.dict("os.environ", {"EVAL_LLM_MODELS": "candidate-a,candidate-b,candidate-a"}):
